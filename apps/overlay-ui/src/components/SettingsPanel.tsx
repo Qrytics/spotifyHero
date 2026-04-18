@@ -87,7 +87,7 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
       }}
     >
       <div
-        className="settings-dialog-panel thin-scrollbar"
+        className="settings-dialog-panel"
         style={{
           width: "100%",
           maxWidth: "300px",

@@ -7,7 +7,7 @@ import {
 } from "@spotifyhero/gameplay-core";
 import { useGameStore } from "../store/gameStore.js";
 import { playbackClock } from "../lib/playbackClock.js";
-import { isSpotifyPlaybackTooQuietForNotes } from "../lib/playbackVolumeGate.js";
+import { shouldHideNotesForQuietPlayback } from "../lib/playbackVolumeGate.js";
 
 /**
  * Canvas 2D highway — hot path avoids allocations, map/filter/sort per frame.
@@ -420,7 +420,9 @@ export function NoteHighway(): React.ReactElement {
       );
       const lookAheadEffective = LOOK_AHEAD_MS / spd;
       const sorted = sortedNotesRef.current;
-      const notesToPaint = isSpotifyPlaybackTooQuietForNotes(state.playback) ? [] : sorted;
+      const notesToPaint = shouldHideNotesForQuietPlayback(state.playback, state.phase)
+        ? []
+        : sorted;
       paintNotes(
         ctx,
         notesToPaint,

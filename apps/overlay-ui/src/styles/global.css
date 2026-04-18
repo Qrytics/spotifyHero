@@ -32,7 +32,7 @@ html, body, #root {
   user-select: none;
 }
 
-/* Narrow overlay scrollbars (Settings modal, etc.) */
+/* Narrow overlay scrollbars (leaderboard, idle, etc.) */
 .thin-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: rgba(120, 120, 140, 0.55) transparent;
@@ -53,6 +53,29 @@ html, body, #root {
 
 .thin-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(140, 140, 160, 0.65);
+}
+
+/* Settings modal — thinner, lower-contrast scrollbar */
+.settings-dialog-panel {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(88, 88, 102, 0.28) transparent;
+}
+
+.settings-dialog-panel::-webkit-scrollbar {
+  width: 4px;
+}
+
+.settings-dialog-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-dialog-panel::-webkit-scrollbar-thumb {
+  background: rgba(90, 90, 105, 0.22);
+  border-radius: 99px;
+}
+
+.settings-dialog-panel::-webkit-scrollbar-thumb:hover {
+  background: rgba(110, 110, 128, 0.38);
 }
 
 /* Custom window chrome (Tauri undecorated) — smaller than OS caption buttons */
@@ -103,6 +126,7 @@ html, body, #root {
   color: var(--text);
 }
 
+/* Scroll speed — green fill + white thumb share one rounded capsule (accent ring on thumb) */
 .speed-range {
   -webkit-appearance: none;
   appearance: none;
@@ -127,8 +151,8 @@ html, body, #root {
   width: 14px;
   height: 14px;
   border-radius: 999px;
-  border: 1px solid rgba(16, 16, 24, 0.9);
-  background: #f4fff7;
+  border: 2px solid var(--accent);
+  background: #ffffff;
   box-shadow: -100vmax 0 0 100vmax var(--accent);
 }
 
@@ -148,8 +172,9 @@ html, body, #root {
   width: 14px;
   height: 14px;
   border-radius: 999px;
-  border: 1px solid rgba(16, 16, 24, 0.9);
-  background: #f4fff7;
+  border: 2px solid var(--accent);
+  background: #ffffff;
+  box-sizing: border-box;
 }
 
 .countdown-overlay {

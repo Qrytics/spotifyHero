@@ -12,7 +12,10 @@ import {
 import type { Chart } from "@spotifyhero/shared-types";
 import { playbackClock } from "../lib/playbackClock.js";
 import { resumeSpotifyPlayback } from "../lib/spotifyControl.js";
-import { isSpotifyPlaybackTooQuietForNotes } from "../lib/playbackVolumeGate.js";
+import {
+  isSpotifyPlaybackTooQuietForNotes,
+  shouldHideNotesForQuietPlayback,
+} from "../lib/playbackVolumeGate.js";
 
 /** Grace after last chart event before we treat the chart as finished. */
 const CHART_FINISH_PAD_MS = 3000;
@@ -269,7 +272,7 @@ export function useGameLoop(): void {
       const liveChart = state.chart;
       if (!liveChart) return;
 
-      if (isSpotifyPlaybackTooQuietForNotes(state.playback)) {
+      if (shouldHideNotesForQuietPlayback(state.playback, state.phase)) {
         rafRef.current = requestAnimationFrame(loop);
         return;
       }

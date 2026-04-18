@@ -18,3 +18,16 @@ export function isSpotifyPlaybackTooQuietForNotes(
   if (v === undefined || v === null) return false;
   return v < MIN_VOLUME_PERCENT_FOR_CHART;
 }
+
+/**
+ * Hide the highway and pause scoring when the device is effectively silent.
+ * Autoplay bypasses this: the chart should keep running visually and in the scorer so sustains
+ * do not flicker out when Spotify's volume poll is low or missing intermittently.
+ */
+export function shouldHideNotesForQuietPlayback(
+  playback: PlaybackState | null | undefined,
+  phase: string
+): boolean {
+  if (phase === "autoplay") return false;
+  return isSpotifyPlaybackTooQuietForNotes(playback);
+}
