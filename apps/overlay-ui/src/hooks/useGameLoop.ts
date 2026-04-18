@@ -10,14 +10,12 @@ import type { Chart } from "@spotifyhero/shared-types";
  *   - Tracks playback position against the active chart.
  *   - In autoplay mode, fires hits for notes in the perfect window.
  *   - Marks missed notes.
- *   - Pushes ScoreEvents to the store.
+ *   - Pushes ScoreEvents to the store via useGameStore.getState() to
+ *     avoid stale-closure issues with the RAF loop.
  */
 export function useGameLoop(): void {
   const chart = useGameStore((s) => s.chart);
-  const playback = useGameStore((s) => s.playback);
   const phase = useGameStore((s) => s.phase);
-  const onScoreEvent = useGameStore((s) => s.onScoreEvent);
-  const setSession = useGameStore((s) => s.setSession);
   const settings = useGameStore((s) => s.settings);
 
   const engineRef = useRef<ScoringEngine | null>(null);
@@ -35,9 +33,12 @@ export function useGameLoop(): void {
     windowManagerRef.current = new NoteWindowManager(chart);
     judgedRef.current = new Set();
     playModeRef.current.setMode(settings.autoplay ? "autoplay" : "manual");
-  }, [chart]); // eslint-disable-line react-hooks/exhaustive-deps
+    // settings.autoplay is intentionally read once here at chart load time;
+    // live setting changes are synced by the phase-listener effect below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chart]);
 
-  // Sync autoplay setting with controller
+  // Sync autoplay setting with controller whenever phase changes
   useEffect(() => {
     playModeRef.current.setMode(
       phase === "autoplay" ? "autoplay" : "manual"
@@ -50,25 +51,27 @@ export function useGameLoop(): void {
       cancelAnimationFrame(rafRef.current);
       return;
     }
-    if (!chart || !playback) return;
-
-    const positionMs = playback.positionMs;
-    const engine = engineRef.current;
-    const windowManager = windowManagerRef.current;
-    if (!engine || !windowManager) return;
+    if (!chart) return;
 
     const loop = () => {
-      if (phase !== "autoplay" && phase !== "manual") return;
-      const pos = useGameStore.getState().playback?.positionMs ?? 0;
+      const state = useGameStore.getState();
+      if (state.phase !== "autoplay" && state.phase !== "manual") return;
 
-      // Autoplay hits
+      const pos = state.playback?.positionMs ?? 0;
+      const engine = engineRef.current;
+      const windowManager = windowManagerRef.current;
+      if (!engine || !windowManager) return;
+
+      // Autoplay hits – read actions from store directly to avoid stale closures
       if (playModeRef.current.isAutoplay()) {
         const hits = windowManager.getAutoplayHits(pos);
         for (const { index } of hits) {
           if (!judgedRef.current.has(index)) {
             judgedRef.current.add(index);
             const event = engine.onNoteHit(index, pos);
-            if (event) onScoreEvent(event, chart.notes.length);
+            if (event) {
+              useGameStore.getState().onScoreEvent(event, chart.notes.length);
+            }
           }
         }
       }
@@ -78,16 +81,17 @@ export function useGameLoop(): void {
       for (const { index } of missed) {
         judgedRef.current.add(index);
         const event = engine.onNoteMissed(index);
-        if (event) onScoreEvent(event, chart.notes.length);
+        if (event) {
+          useGameStore.getState().onScoreEvent(event, chart.notes.length);
+        }
       }
 
-      // End of chart detection
+      // End of chart detection (3 s after last note)
       const lastNote = chart.notes[chart.notes.length - 1];
       if (lastNote && pos > lastNote.timeMs + 3000) {
-        const session = engine.finalize(
-          useGameStore.getState().settings.playerName
-        );
-        setSession(session);
+        const currentState = useGameStore.getState();
+        const session = engine.finalize(currentState.settings.playerName);
+        currentState.setSession(session);
         return;
       }
 
@@ -96,5 +100,8 @@ export function useGameLoop(): void {
 
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [phase, chart, playback]); // eslint-disable-line react-hooks/exhaustive-deps
+    // phase and chart are the only stable triggers; store callbacks are
+    // accessed via getState() inside the loop to avoid stale closures.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, chart]);
 }

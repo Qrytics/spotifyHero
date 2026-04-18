@@ -36,7 +36,7 @@ pub fn run() {
             let store = tauri_plugin_store::StoreBuilder::new("settings.json")
                 .build(app.handle().clone());
 
-            if let Ok(x) = store.get("window_x").and_then(|v| v.as_f64().ok().ok_or(tauri_plugin_store::Error::NotFound("x".into()))) {
+            if let Some(x) = store.get("window_x").and_then(|v| v.as_f64()) {
                 // Ignore errors – first launch has no saved position
                 let _ = win.set_position(tauri::PhysicalPosition::new(x as i32, 0));
             }

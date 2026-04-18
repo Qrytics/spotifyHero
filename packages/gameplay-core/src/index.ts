@@ -6,7 +6,7 @@ import type {
   Note,
   ScoreEvent,
 } from "@spotifyhero/shared-types";
-import { randomUUID } from "crypto";
+// Use Web Crypto randomUUID (available in Node ≥19 and all modern browsers)
 
 // ---------------------------------------------------------------------------
 // Hit-window defaults (milliseconds, ±)
@@ -87,7 +87,7 @@ export class ScoringEngine {
   constructor(chart: Chart, windows: HitWindows = DEFAULT_HIT_WINDOWS) {
     this.chart = chart;
     this.windows = windows;
-    this.sessionId = randomUUID();
+    this.sessionId = globalThis.crypto.randomUUID();
   }
 
   get currentScore(): number {
