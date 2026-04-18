@@ -43,12 +43,23 @@ export type GamePhase =
   | "paused"         // Game is paused / Spotify paused
   | "results";       // Session finished, showing scores
 
+export const TRACK_LIFECYCLE_STATES = [
+  "idle",
+  "loading",
+  "generating",
+  "countdown",
+  "playing",
+  "ending",
+] as const;
+export type TrackLifecycleState = (typeof TRACK_LIFECYCLE_STATES)[number];
+
 // ---------------------------------------------------------------------------
 // Store shape
 // ---------------------------------------------------------------------------
 
 interface GameState {
   phase: GamePhase;
+  trackLifecycle: TrackLifecycleState;
   playback: PlaybackState | null;
   chart: Chart | null;
   settings: AppSettings;
@@ -86,6 +97,7 @@ interface GameState {
 
 export const useGameStore = create<GameState>((set, get) => ({
   phase: "idle",
+  trackLifecycle: "idle",
   playback: null,
   chart: null,
   settings: settingsFromEnv(),
@@ -98,7 +110,17 @@ export const useGameStore = create<GameState>((set, get) => ({
   lastScoreEvent: null,
   session: null,
 
-  setPhase: (phase) => set({ phase }),
+  setPhase: (phase) => {
+    const trackLifecycle: TrackLifecycleState =
+      phase === "loading"
+        ? "loading"
+        : phase === "results"
+          ? "ending"
+          : phase === "idle"
+            ? "idle"
+            : "playing";
+    set({ phase, trackLifecycle });
+  },
 
   setPlayback: (playback) => {
     const prevTrackId = get().playback?.trackId ?? null;
@@ -115,7 +137,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!playback.isPlaying || !nextTrackId) {
       const phase = get().phase;
       if (phase === "autoplay" || phase === "manual") {
-        set({ phase: "paused" });
+        set({ phase: "paused", trackLifecycle: "ending" });
       }
       return;
     }
@@ -141,6 +163,8 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       set({
         phase: "loading",
+        trackLifecycle: "loading",
+        chart: null,
         score: 0,
         combo: 0,
         maxCombo: 0,
@@ -159,6 +183,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (phaseNow === "paused") {
       set({
         phase: playPhase,
+        trackLifecycle: "playing",
         lastPlayPhase:
           playPhase === "autoplay" || playPhase === "manual"
             ? playPhase
@@ -167,6 +192,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     } else if (phaseNow === "idle") {
       set({
         phase: playPhase,
+        trackLifecycle: "playing",
         lastPlayPhase:
           playPhase === "autoplay" || playPhase === "manual"
             ? playPhase
@@ -177,18 +203,15 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   setChart: (chart) =>
     set((state) => {
-      const keepExistingChart =
-        state.chart &&
-        state.chart.trackId === chart.trackId &&
-        state.chart.difficulty === chart.difficulty;
       const phase: GamePhase =
         state.sessionPlayMode ??
         (state.settings.autoplay ? "autoplay" : "manual");
       const nextLast =
         phase === "autoplay" || phase === "manual" ? phase : state.lastPlayPhase;
       return {
-        chart: keepExistingChart ? state.chart : chart,
+        chart,
         phase,
+        trackLifecycle: "countdown",
         sessionPlayMode: null,
         lastPlayPhase: nextLast,
       };
@@ -196,6 +219,11 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   onScoreEvent: (event, totalNotes) =>
     set((state) => {
+      const currentTrackId = state.chart?.trackId;
+      const playbackTrackId = state.playback?.trackId ?? null;
+      if (!currentTrackId || playbackTrackId !== currentTrackId) {
+        return state;
+      }
       const pts = Number(event.pointsAwarded);
       const awarded = Number.isFinite(pts) ? pts : 0;
       const nextScore =
@@ -211,13 +239,15 @@ export const useGameStore = create<GameState>((set, get) => ({
       };
     }),
 
-  setSession: (session) => set({ session, phase: "results" }),
+  setSession: (session) =>
+    set({ session, phase: "results", trackLifecycle: "ending" }),
 
   togglePlayMode: () => {
     const current = get().phase;
     const next: GamePhase = current === "autoplay" ? "manual" : "autoplay";
     set({
       phase: next,
+      trackLifecycle: "playing",
       lastPlayPhase:
         next === "autoplay" || next === "manual" ? next : get().lastPlayPhase,
     });
@@ -234,6 +264,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       session: null,
       chart: null,
       phase: "idle",
+      trackLifecycle: "idle",
       sessionPlayMode: null,
       lastPlayPhase: state.settings.autoplay ? "autoplay" : "manual",
     })),

@@ -17,6 +17,7 @@ function resetStore(): void {
   const settings = useGameStore.getState().settings;
   useGameStore.setState({
     phase: "idle",
+    trackLifecycle: "idle",
     playback: null,
     chart: null,
     settings,
@@ -86,6 +87,8 @@ describe("gameStore setPlayback chart reload gating", () => {
 
     const state = useGameStore.getState();
     expect(state.phase).toBe("loading");
+    expect(state.trackLifecycle).toBe("loading");
+    expect(state.chart).toBeNull();
     expect(state.sessionPlayMode).toBe("manual");
   });
 });

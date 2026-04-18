@@ -66,6 +66,7 @@ export function useChartGeneration(): void {
 
   useEffect(() => {
     if (phase !== "loading" || !trackId) return;
+    useGameStore.setState({ trackLifecycle: "generating" });
 
     const playback = useGameStore.getState().playback;
     const track = playback?.track;

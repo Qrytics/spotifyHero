@@ -271,6 +271,16 @@ export function NoteHighway(): React.ReactElement {
       rafRef.current = requestAnimationFrame(loop);
 
       const state = useGameStore.getState();
+      if (
+        state.trackLifecycle === "ending" ||
+        state.trackLifecycle === "loading" ||
+        state.trackLifecycle === "generating"
+      ) {
+        visibility.goneTap.clear();
+        visibility.activeSustains.clear();
+        visibility.missSlide.clear();
+        return;
+      }
       if (!PLAYABLE_PHASES.has(state.phase)) return;
       const c = state.chart;
       if (!c) return;

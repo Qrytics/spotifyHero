@@ -15,6 +15,7 @@ import { WindowChrome } from "./WindowChrome.js";
 
 export function App(): React.ReactElement {
   const phase = useGameStore((s) => s.phase);
+  const trackLifecycle = useGameStore((s) => s.trackLifecycle);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Core game hooks
@@ -53,7 +54,7 @@ export function App(): React.ReactElement {
         </div>
       )}
 
-      {phase === "loading" && (
+      {(trackLifecycle === "loading" || trackLifecycle === "generating") && (
         <div
           style={{
             flex: 1,
@@ -64,7 +65,7 @@ export function App(): React.ReactElement {
             fontSize: "14px",
           }}
         >
-          Generating chart…
+          {trackLifecycle === "generating" ? "Generating chart…" : "Loading track…"}
         </div>
       )}
 
