@@ -4,6 +4,7 @@ pub mod commands;
 pub mod spotify;
 pub mod settings;
 
+use std::path::Path;
 use tauri::{
     WebviewUrl,
     WebviewWindowBuilder,
@@ -11,6 +12,8 @@ use tauri::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _ = dotenvy::from_filename(Path::new(env!("CARGO_MANIFEST_DIR")).join(".env"));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
@@ -46,6 +49,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_playback_state,
+            commands::spotify_login,
+            commands::spotify_logout,
+            commands::spotify_connection_status,
             commands::set_always_on_top,
             commands::save_window_geometry,
         ])

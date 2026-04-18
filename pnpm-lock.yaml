@@ -42,6 +42,9 @@ importers:
       '@spotifyhero/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
+      '@tauri-apps/api':
+        specifier: ^2.3.0
+        version: 2.10.1
       pixi.js:
         specifier: ^8.2.1
         version: 8.18.1

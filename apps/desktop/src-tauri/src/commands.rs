@@ -1,40 +1,72 @@
+use crate::spotify::{
+    clear_tokens, ensure_access_token, fetch_current_playback, idle_playback, load_store,
+    run_login, PlaybackStatePayload,
+};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 use tauri::command;
 
-// ---------------------------------------------------------------------------
-// Shared response types
-// ---------------------------------------------------------------------------
+static HTTP: OnceLock<Client> = OnceLock::new();
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PlaybackState {
-    pub is_playing: bool,
-    pub position_ms: u64,
-    pub track_id: Option<String>,
-    pub track_name: Option<String>,
-    pub artists: Vec<String>,
-    pub duration_ms: u64,
-    pub album_art: Option<String>,
+fn http_client() -> &'static Client {
+    HTTP.get_or_init(Client::new)
 }
 
 // ---------------------------------------------------------------------------
-// Commands (called from TypeScript via invoke())
+// Spotify
 // ---------------------------------------------------------------------------
 
-/// Fetch the current Spotify playback state.
-/// In a full implementation this calls the Spotify Web API using a stored token.
+/// Browser PKCE login; saves tokens to the plugin store.
 #[command]
-pub async fn get_playback_state() -> Result<PlaybackState, String> {
-    // TODO: delegate to spotify::fetch_playback() once OAuth is wired.
-    // Returning a stub so the UI can develop independently.
-    Ok(PlaybackState {
-        is_playing: false,
-        position_ms: 0,
-        track_id: None,
-        track_name: None,
-        artists: vec![],
-        duration_ms: 0,
-        album_art: None,
+pub async fn spotify_login(app: tauri::AppHandle) -> Result<(), String> {
+    run_login(app).await
+}
+
+#[command]
+pub async fn spotify_logout(app: tauri::AppHandle) -> Result<(), String> {
+    let store = load_store(&app)?;
+    clear_tokens(store.as_ref())
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SpotifyConnectionStatus {
+    pub connected: bool,
+}
+
+#[command]
+pub async fn spotify_connection_status(
+    app: tauri::AppHandle,
+) -> Result<SpotifyConnectionStatus, String> {
+    let store = load_store(&app)?;
+    Ok(SpotifyConnectionStatus {
+        connected: crate::spotify::tokens::has_refresh_token(store.as_ref()),
     })
+}
+
+/// Poll Spotify Web API for the active player (Premium + active device recommended).
+#[command]
+pub async fn get_playback_state(app: tauri::AppHandle) -> Result<PlaybackStatePayload, String> {
+    let Ok(client_id) = std::env::var("SPOTIFY_CLIENT_ID") else {
+        return Ok(idle_playback());
+    };
+
+    let http = http_client();
+    let Some(access) = ensure_access_token(&app, http, &client_id).await? else {
+        return Ok(idle_playback());
+    };
+
+    match fetch_current_playback(http, &access).await {
+        Ok(p) => Ok(p),
+        Err(e) if e == "unauthorized" => {
+            if let Ok(store) = load_store(&app) {
+                let _ = clear_tokens(store.as_ref());
+            }
+            Ok(idle_playback())
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Toggle always-on-top for the overlay window.

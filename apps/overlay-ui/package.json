@@ -13,6 +13,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.3.0",
     "@spotifyhero/audio-engine": "workspace:*",
     "@spotifyhero/chart-generator": "workspace:*",
     "@spotifyhero/gameplay-core": "workspace:*",
