@@ -223,12 +223,12 @@ describe("generateDeterministicChart", () => {
     }
   });
 
-  it("uses deterministic-1.4 generator version", () => {
+  it("uses deterministic-1.6 generator version", () => {
     const beats = makeBeatEvents(5, 500);
     const chart = generateDeterministicChart("v", beats, 120, {
       difficulty: "medium",
     });
-    expect(chart.generatorVersion).toBe("deterministic-1.5");
+    expect(chart.generatorVersion).toBe("deterministic-1.6");
   });
 
   it("confidence-first filter with mixed strengths yields fewer easy notes than expert", () => {
@@ -310,6 +310,64 @@ describe("generateDeterministicChart", () => {
       expect(run).toBeLessThanOrEqual(maxRun);
     }
   });
+
+  it("suppresses note generation during confirmed silence windows", () => {
+    const beats: BeatEvent[] = [
+      { timeMs: 0, confidence: 0.9, isBeat: true, isOnset: true, amplitude: 0.8, rms: 0.7 },
+      { timeMs: 100, confidence: 0.9, isBeat: true, isOnset: true, amplitude: 0.02, rms: 0.02 },
+      { timeMs: 200, confidence: 0.9, isBeat: true, isOnset: true, amplitude: 0.02, rms: 0.02 },
+      { timeMs: 300, confidence: 0.9, isBeat: true, isOnset: true, amplitude: 0.02, rms: 0.02 },
+      { timeMs: 400, confidence: 0.9, isBeat: true, isOnset: true, amplitude: 0.02, rms: 0.02 },
+      { timeMs: 500, confidence: 0.9, isBeat: true, isOnset: true, amplitude: 0.09, rms: 0.08 },
+      { timeMs: 600, confidence: 0.9, isBeat: true, isOnset: true, amplitude: 0.09, rms: 0.08 },
+    ];
+    const chart = generateDeterministicChart("silence", beats, 120, {
+      difficulty: "expert",
+      minGapMs: 1,
+    });
+    expect(chart.notes.some((n) => n.timeMs >= 300 && n.timeMs <= 400)).toBe(
+      false
+    );
+    expect(chart.notes.some((n) => n.timeMs === 600)).toBe(true);
+  });
+
+  it("uses hysteresis so brief noise-floor bumps do not confirm silence", () => {
+    const beats: BeatEvent[] = [
+      { timeMs: 0, confidence: 0.95, isBeat: true, isOnset: true, amplitude: 0.02, rms: 0.02 },
+      { timeMs: 80, confidence: 0.95, isBeat: true, isOnset: true, amplitude: 0.02, rms: 0.02 },
+      { timeMs: 160, confidence: 0.95, isBeat: true, isOnset: true, amplitude: 0.02, rms: 0.02 },
+      { timeMs: 240, confidence: 0.95, isBeat: true, isOnset: true, amplitude: 0.049, rms: 0.035 },
+      { timeMs: 320, confidence: 0.95, isBeat: true, isOnset: true, amplitude: 0.047, rms: 0.034 },
+      { timeMs: 400, confidence: 0.95, isBeat: true, isOnset: true, amplitude: 0.06, rms: 0.04 },
+      { timeMs: 480, confidence: 0.95, isBeat: true, isOnset: true, amplitude: 0.08, rms: 0.06 },
+      { timeMs: 560, confidence: 0.95, isBeat: true, isOnset: true, amplitude: 0.09, rms: 0.07 },
+    ];
+    const chart = generateDeterministicChart("hys", beats, 120, {
+      difficulty: "expert",
+      minGapMs: 1,
+    });
+    expect(chart.notes.some((n) => n.timeMs === 240 || n.timeMs === 320 || n.timeMs === 400)).toBe(true);
+    expect(chart.notes.some((n) => n.timeMs === 560)).toBe(true);
+  });
+
+  it("supports normalization profile tuning for silence thresholding", () => {
+    const beats: BeatEvent[] = [
+      { timeMs: 0, confidence: 0.96, isBeat: true, isOnset: true, amplitude: 0.8, rms: 0.6 },
+      { timeMs: 100, confidence: 0.96, isBeat: true, isOnset: true, amplitude: 0.034, rms: 0.023 },
+      { timeMs: 200, confidence: 0.96, isBeat: true, isOnset: true, amplitude: 0.034, rms: 0.023 },
+      { timeMs: 300, confidence: 0.96, isBeat: true, isOnset: true, amplitude: 0.034, rms: 0.023 },
+      { timeMs: 400, confidence: 0.96, isBeat: true, isOnset: true, amplitude: 0.07, rms: 0.05 },
+    ];
+    const quiet = generateDeterministicChart("profile", beats, 120, {
+      difficulty: "expert",
+      normalizationProfile: "quiet",
+    });
+    const loud = generateDeterministicChart("profile", beats, 120, {
+      difficulty: "expert",
+      normalizationProfile: "loud",
+    });
+    expect(loud.notes.length).toBeLessThanOrEqual(quiet.notes.length);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -351,7 +409,7 @@ describe("HybridChartGenerator", () => {
     const gen = new HybridChartGenerator(new PassthroughMLRefiner(), 0.65);
     const beats = makeBeatEvents(20, 500);
     const chart = await gen.generate("t", beats, 120, { difficulty: "medium" });
-    expect(chart.generatorVersion).toBe("deterministic-1.5");
+    expect(chart.generatorVersion).toBe("deterministic-1.6");
   });
 
   it("returns a valid chart shape", async () => {

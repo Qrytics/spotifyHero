@@ -145,6 +145,10 @@ export type ChallengePayload = z.infer<typeof ChallengePayloadSchema>;
 export const BeatEventSchema = z.object({
   timeMs: z.number().nonnegative(),
   confidence: z.number().min(0).max(1),
+  /** Optional normalized frame amplitude (0-1). */
+  amplitude: z.number().min(0).max(1).optional(),
+  /** Optional frame RMS energy (0-1). */
+  rms: z.number().min(0).max(1).optional(),
   isBeat: z.boolean(),
   isOnset: z.boolean(),
 });
