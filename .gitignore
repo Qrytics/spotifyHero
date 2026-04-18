@@ -12,6 +12,9 @@ apps/desktop/src-tauri/target/
 .env.*.local
 scripts/itch.env
 
+# Local tooling (e.g. downloaded itch butler for BUTLER_PATH)
+.tools/
+
 # OS noise
 .DS_Store
 Thumbs.db

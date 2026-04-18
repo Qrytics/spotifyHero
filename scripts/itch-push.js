@@ -2,7 +2,7 @@
  * Upload the Windows NSIS build to itch.io using butler.
  * https://itch.io/docs/butler/
  *
- * Prerequisites: butler on PATH, `butler login` once.
+ * Prerequisites: butler on PATH (or set BUTLER_PATH / ITCH_BUTLER to butler.exe), `butler login` once.
  * Config: env ITCH_USER + ITCH_GAME, or scripts/itch.env (see itch.env.example).
  */
 
@@ -62,6 +62,11 @@ function findInstaller() {
 }
 
 function resolveButler() {
+  const fromEnv = process.env.BUTLER_PATH || process.env.ITCH_BUTLER;
+  if (fromEnv && fs.existsSync(fromEnv)) {
+    return fromEnv;
+  }
+
   try {
     const cmd = process.platform === "win32" ? "where" : "which";
     execFileSync(cmd, ["butler"], { stdio: "pipe" });
