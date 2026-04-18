@@ -32,6 +32,36 @@ function countTapHold(notes: readonly Note[]): { taps: number; holds: number } {
   return { taps, holds };
 }
 
+function hasEligibleSustainWindow(
+  beats: readonly BeatEvent[],
+  difficulty: keyof typeof DIFFICULTY_PARAMS,
+  bpm: number
+): boolean {
+  const preset = DIFFICULTY_PARAMS[difficulty];
+  const sustainGapMaxMs = Math.max(
+    preset.holdGapMinMs,
+    preset.minHoldDurationMs,
+    Math.min(
+      preset.holdGapMaxMs,
+      Math.round((60_000 / Math.max(1, bpm)) * preset.holdGapBeatFraction)
+    )
+  );
+  for (let i = 0; i + 1 < beats.length; i++) {
+    const curr = beats[i]!;
+    const next = beats[i + 1]!;
+    const gap = next.timeMs - curr.timeMs;
+    if (
+      gap >= preset.holdGapMinMs &&
+      gap <= sustainGapMaxMs &&
+      gap >= preset.minHoldDurationMs &&
+      Math.min(curr.confidence, next.confidence) >= preset.sustainConfidenceMin
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // mergeAdjacentHoldNotes
 // ---------------------------------------------------------------------------
@@ -198,7 +228,7 @@ describe("generateDeterministicChart", () => {
     const chart = generateDeterministicChart("v", beats, 120, {
       difficulty: "medium",
     });
-    expect(chart.generatorVersion).toBe("deterministic-1.4");
+    expect(chart.generatorVersion).toBe("deterministic-1.5");
   });
 
   it("confidence-first filter with mixed strengths yields fewer easy notes than expert", () => {
@@ -244,7 +274,7 @@ describe("generateDeterministicChart", () => {
     expect(expertCounts.taps).toBeGreaterThan(hardCounts.taps);
   });
 
-  it("keeps sustain frequency low across all difficulties", () => {
+  it("keeps sustain frequency within explicit per-difficulty bounds", () => {
     const beats = makeBeatEvents(220, 120);
     const diffs = ["easy", "medium", "hard", "expert"] as const;
     for (const difficulty of diffs) {
@@ -252,9 +282,32 @@ describe("generateDeterministicChart", () => {
         difficulty,
       });
       const counts = countTapHold(chart.notes);
-      if (counts.holds === 0) continue;
-      const tapPerHold = counts.taps / counts.holds;
-      expect(tapPerHold).toBeGreaterThanOrEqual(12);
+      const total = counts.taps + counts.holds;
+      if (total === 0) continue;
+      const sustainPct = counts.holds / total;
+      const preset = DIFFICULTY_PARAMS[difficulty];
+      if (hasEligibleSustainWindow(beats, difficulty, 125)) {
+        expect(sustainPct).toBeGreaterThanOrEqual(
+          preset.minSustainPercent - 0.01
+        );
+      }
+      expect(sustainPct).toBeLessThanOrEqual(
+        preset.maxSustainPercent + 0.01
+      );
+    }
+  });
+
+  it("enforces hard cap for consecutive sustain chains", () => {
+    const beats = makeBeatEvents(300, 120);
+    const chart = generateDeterministicChart("chain-cap", beats, 125, {
+      difficulty: "easy",
+    });
+    const maxRun = DIFFICULTY_PARAMS.easy.maxConsecutiveSustains;
+    let run = 0;
+    for (const note of chart.notes) {
+      if (note.durationMs > 0) run += 1;
+      else run = 0;
+      expect(run).toBeLessThanOrEqual(maxRun);
     }
   });
 });
@@ -298,7 +351,7 @@ describe("HybridChartGenerator", () => {
     const gen = new HybridChartGenerator(new PassthroughMLRefiner(), 0.65);
     const beats = makeBeatEvents(20, 500);
     const chart = await gen.generate("t", beats, 120, { difficulty: "medium" });
-    expect(chart.generatorVersion).toBe("deterministic-1.4");
+    expect(chart.generatorVersion).toBe("deterministic-1.5");
   });
 
   it("returns a valid chart shape", async () => {
