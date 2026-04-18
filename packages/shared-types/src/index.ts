@@ -77,6 +77,11 @@ export const ScoreEventSchema = z.object({
   combo: z.number().int().nonnegative(),
   /** Tap / hold head / hold fail — counted in accuracy tallies; sustain ticks omit. */
   countsTowardAccuracy: z.boolean().optional(),
+  /**
+   * When false, HUD/highway skips hit burst FX (sustain ticks, hold head).
+   * Omit / true for taps and hold tail completion.
+   */
+  showHitFx: z.boolean().optional(),
 });
 export type ScoreEvent = z.infer<typeof ScoreEventSchema>;
 
@@ -169,6 +174,8 @@ export type WindowSettings = z.infer<typeof WindowSettingsSchema>;
 
 export const AppSettingsSchema = z.object({
   window: WindowSettingsSchema.default({}),
+  /** >1 = faster scrolling (shorter lookahead window). ~0.45–5. */
+  noteScrollSpeed: z.number().min(0.45).max(5).default(1),
   difficulty: DifficultySchema.default("medium"),
   /** When true, new charts start in autoplay; press play key to switch to manual. */
   autoplay: z.boolean().default(false),

@@ -41,13 +41,15 @@ function demoBeatEvents(track: SpotifyTrack): { events: BeatEvent[]; bpm: number
   };
 
   for (let t = phase; t < track.durationMs; t += beatMs) {
-    add(t, 0.9);
+    add(t, 0.94);
   }
   for (let t = phase; t < track.durationMs; t += eighth) {
-    add(t, 0.72);
+    add(t, 0.71);
   }
-  for (let t = phase; t < track.durationMs; t += sixteenth) {
-    add(t, 0.42);
+  let sixIdx = 0;
+  for (let t = phase; t < track.durationMs; t += sixteenth, sixIdx++) {
+    if (sixIdx % 2 === 1) continue;
+    add(t, 0.34);
   }
 
   const events = [...byTime.values()].sort((a, b) => a.timeMs - b.timeMs);

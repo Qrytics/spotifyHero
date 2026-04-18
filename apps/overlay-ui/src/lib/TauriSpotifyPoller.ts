@@ -10,6 +10,9 @@ import {
 
 /**
  * Polls the Tauri command `get_playback_state` (Spotify Web API on the Rust side).
+ * Default interval is several seconds: `playbackClock` extrapolates between polls;
+ * we mainly need to notice pauses, seeks, and track changes. A future improvement is
+ * `GET /v1/me/player/queue` (Spotify) to prefetch the next track and relax polling further.
  */
 export class TauriSpotifyPoller implements SpotifyPoller {
   private intervalId: ReturnType<typeof setInterval> | null = null;

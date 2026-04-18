@@ -11,9 +11,12 @@ function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+/** Desktop: poll infrequently — playback position is smoothed via `playbackClock`; only need timely pause/track changes. */
+const TAURI_POLL_MS = 2800;
+
 function createDefaultPoller(): SpotifyPoller {
   if (isTauriRuntime()) {
-    return new TauriSpotifyPoller(500);
+    return new TauriSpotifyPoller(TAURI_POLL_MS);
   }
   return new MockSpotifyPoller(
     {
@@ -32,7 +35,8 @@ function createDefaultPoller(): SpotifyPoller {
  * Manages the Spotify playback polling loop and drift correction.
  * Drives `setPlayback` on the game store.
  *
- * In the Tauri desktop shell, uses `TauriSpotifyPoller` → `get_playback_state`.
+ * In the Tauri desktop shell, uses `TauriSpotifyPoller` → `get_playback_state`
+ * on a multi-second interval (pause/skip detection; timing uses `playbackClock` between polls).
  * In the browser dev server, uses `MockSpotifyPoller` (see README / `__mockPoller`).
  *
  * The effect intentionally runs only on mount (empty dep array): the poller

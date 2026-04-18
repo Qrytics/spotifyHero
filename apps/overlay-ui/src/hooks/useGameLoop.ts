@@ -5,18 +5,12 @@ import {
   PlayModeController,
   NoteWindowManager,
   DEFAULT_HIT_WINDOWS,
+  CHART_LEAD_IN_MS,
+  chartEndPlaybackMs,
+  noteHeadTimeMs,
 } from "@spotifyhero/gameplay-core";
 import type { Chart } from "@spotifyhero/shared-types";
 import { playbackClock } from "../lib/playbackClock.js";
-
-function chartEndMs(chart: Chart): number {
-  let max = 0;
-  for (const n of chart.notes) {
-    const t = n.timeMs + (n.durationMs ?? 0);
-    if (t > max) max = t;
-  }
-  return max;
-}
 
 /** Grace after last chart event before we treat the chart as finished. */
 const CHART_FINISH_PAD_MS = 3000;
@@ -30,6 +24,11 @@ const FINISH_STALE_WAIT_FRAMES = 180;
 
 /** Manual + no lane input + this many consecutive note misses → switch to autoplay. */
 const AFK_MISS_THRESHOLD = 5;
+/**
+ * After a physical key-up, treat the lane as still held briefly for sustain checkpoints only.
+ * Stops one-frame gaps / OS input jitter from failing an otherwise solid long hold.
+ */
+const SUSTAIN_LANE_HELD_GRACE_MS = 55;
 
 function allNotesResolved(engine: ScoringEngine, chart: Chart): boolean {
   for (let i = 0; i < chart.notes.length; i++) {
@@ -53,7 +52,8 @@ function bestLaneHitIndex(
     if (!note || note.lane !== lane) continue;
     if (engine.isResolved(i)) continue;
 
-    const delta = positionMs - note.timeMs;
+    const head = noteHeadTimeMs(note, CHART_LEAD_IN_MS);
+    const delta = positionMs - head;
     if (Math.abs(delta) <= win) {
       const a = Math.abs(delta);
       if (a < bestAbs) {
@@ -111,6 +111,13 @@ export function useGameLoop(): void {
   const engineRef = useRef<ScoringEngine | null>(null);
   const windowManagerRef = useRef<NoteWindowManager | null>(null);
   const lanesHeldRef = useRef<boolean[]>([false, false, false, false]);
+  /** Last `performance.now()` each lane reported down (raw), for sustain grace only. */
+  const laneLastHeldTruePerfRef = useRef<number[]>([
+    Number.NEGATIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  ]);
   const lastPlaybackPosRef = useRef<number | null>(null);
   const rafRef = useRef<number>(0);
   const playModeRef = useRef(
@@ -128,9 +135,22 @@ export function useGameLoop(): void {
 
   useEffect(() => {
     if (!chart) return;
-    engineRef.current = new ScoringEngine(chart);
-    windowManagerRef.current = new NoteWindowManager(chart);
+    engineRef.current = new ScoringEngine(chart, {
+      chartLeadInMs: CHART_LEAD_IN_MS,
+    });
+    windowManagerRef.current = new NoteWindowManager(
+      chart,
+      2000,
+      DEFAULT_HIT_WINDOWS,
+      CHART_LEAD_IN_MS
+    );
     lanesHeldRef.current = [false, false, false, false];
+    laneLastHeldTruePerfRef.current = [
+      Number.NEGATIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ];
     lastPlaybackPosRef.current = null;
     chartMountPerfRef.current = performance.now();
     loopFramesForChartRef.current = 0;
@@ -227,7 +247,7 @@ export function useGameLoop(): void {
 
       loopFramesForChartRef.current += 1;
 
-      const endMs = chartEndMs(liveChart);
+      const endMs = chartEndPlaybackMs(liveChart, CHART_LEAD_IN_MS);
       const sinceChartMount =
         performance.now() - chartMountPerfRef.current;
 
@@ -240,7 +260,6 @@ export function useGameLoop(): void {
         mountStaleResyncDoneRef.current = true;
         syncClockToStorePlayback(liveChart);
         engine.resetSeekState();
-        lanesHeldRef.current = [false, false, false, false];
         lastPlaybackPosRef.current = null;
         clockSyncedTrackRef.current = liveChart.trackId;
         rafRef.current = requestAnimationFrame(loop);
@@ -263,13 +282,30 @@ export function useGameLoop(): void {
 
       const prev = lastPlaybackPosRef.current;
       lastPlaybackPosRef.current = pos;
-      if (prev !== null && Math.abs(pos - prev) > 1500) {
+      // Large *backward* jumps (seek) need a scoring reset. Forward jumps (catch-up after
+      // throttled rAF or Spotify poll) must NOT clear active holds or lane keys — that was
+      // causing sustains to vanish / fail while the player still held the key.
+      if (prev !== null && pos < prev - 1200) {
         engine.resetSeekState();
-        lanesHeldRef.current = [false, false, false, false];
       }
 
-      const laneHeld =
-        playModeRef.current.isAutoplay() ? null : lanesHeldRef.current;
+      const laneHeld: boolean[] | null = playModeRef.current.isAutoplay()
+        ? null
+        : (() => {
+            const raw = lanesHeldRef.current;
+            const nowPerf = performance.now();
+            const out: boolean[] = [false, false, false, false];
+            for (let l = 0; l < 4; l++) {
+              if (raw[l] === true) {
+                laneLastHeldTruePerfRef.current[l] = nowPerf;
+                out[l] = true;
+              } else {
+                const lastTrue = laneLastHeldTruePerfRef.current[l]!;
+                out[l] = nowPerf - lastTrue < SUSTAIN_LANE_HELD_GRACE_MS;
+              }
+            }
+            return out;
+          })();
 
       const noteCount = liveChart.notes.length;
 

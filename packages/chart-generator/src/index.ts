@@ -36,35 +36,50 @@ export const DIFFICULTY_PARAMS: Record<
     holdGapMaxMs: number;
     /** Holds shorter than this are emitted as taps (micro-holds are awkward). */
     minHoldDurationMs: number;
+    /** Do not merge chains longer than this (more tapping, shorter sustains). */
+    holdMaxDurationMs: number;
+    /**
+     * 0–99: deterministic chance per mergeable chain to stay as separate taps
+     * instead of one hold (more tap gameplay).
+     */
+    holdDemergePercent: number;
   }
 > = {
   easy: {
     densityMultiplier: 0.26,
     minGapMs: 148,
-    holdGapMinMs: 320,
-    holdGapMaxMs: 2400,
+    holdGapMinMs: 520,
+    holdGapMaxMs: 1300,
     minHoldDurationMs: 400,
+    holdMaxDurationMs: 720,
+    holdDemergePercent: 48,
   },
   medium: {
     densityMultiplier: 0.52,
     minGapMs: 105,
-    holdGapMinMs: 260,
-    holdGapMaxMs: 1900,
+    holdGapMinMs: 440,
+    holdGapMaxMs: 1100,
     minHoldDurationMs: 320,
+    holdMaxDurationMs: 720,
+    holdDemergePercent: 42,
   },
   hard: {
     densityMultiplier: 0.78,
     minGapMs: 88,
-    holdGapMinMs: 220,
-    holdGapMaxMs: 1750,
+    holdGapMinMs: 380,
+    holdGapMaxMs: 900,
     minHoldDurationMs: 280,
+    holdMaxDurationMs: 650,
+    holdDemergePercent: 38,
   },
   expert: {
     densityMultiplier: 1.0,
     minGapMs: 72,
-    holdGapMinMs: 200,
-    holdGapMaxMs: 1550,
+    holdGapMinMs: 340,
+    holdGapMaxMs: 780,
     minHoldDurationMs: 240,
+    holdMaxDurationMs: 580,
+    holdDemergePercent: 34,
   },
 };
 
@@ -77,7 +92,10 @@ export function mergeAdjacentHoldNotes(
   notes: Note[],
   holdGapMinMs = 220,
   holdGapMaxMs = 1600,
-  minHoldDurationMs = 280
+  minHoldDurationMs = 280,
+  holdMaxDurationMs = 1400,
+  /** 0 = always merge eligible chains into holds (tests). Above 0 = deterministic tap chains. */
+  holdDemergePercent = 0
 ): Note[] {
   const maxLane = notes.reduce((m, n) => Math.max(m, n.lane), 0);
   const buckets: Note[][] = Array.from({ length: maxLane + 1 }, () => []);
@@ -101,6 +119,7 @@ export function mergeAdjacentHoldNotes(
         continue;
       }
 
+      const headMs = laneNotes[i]!.timeMs;
       let j = i;
       while (j + 1 < laneNotes.length) {
         const a = laneNotes[j]!;
@@ -108,6 +127,7 @@ export function mergeAdjacentHoldNotes(
         if (a.durationMs !== 0 || b.durationMs !== 0) break;
         const gap = b.timeMs - a.timeMs;
         if (gap < holdGapMinMs || gap > holdGapMaxMs) break;
+        if (b.timeMs - headMs > holdMaxDurationMs) break;
         j += 1;
       }
 
@@ -116,7 +136,22 @@ export function mergeAdjacentHoldNotes(
         const tail = laneNotes[j]!;
         const dur = tail.timeMs - head.timeMs;
         if (dur >= minHoldDurationMs) {
-          merged.push({ timeMs: head.timeMs, lane, durationMs: dur });
+          const h = mix32(
+            Math.imul(lane + 1, 0x85ebca6b) ^
+              Math.floor(head.timeMs) ^
+              Math.imul(Math.floor(tail.timeMs), 65537)
+          );
+          const demerge =
+            holdDemergePercent > 0 &&
+            (h >>> 0) % 100 < holdDemergePercent;
+          if (demerge) {
+            for (let k = i; k <= j; k++) {
+              const n = laneNotes[k]!;
+              merged.push({ timeMs: n.timeMs, lane, durationMs: 0 });
+            }
+          } else {
+            merged.push({ timeMs: head.timeMs, lane, durationMs: dur });
+          }
         } else {
           for (let k = i; k <= j; k++) {
             const n = laneNotes[k]!;
@@ -256,7 +291,9 @@ export function generateDeterministicChart(
     notes,
     preset.holdGapMinMs,
     preset.holdGapMaxMs,
-    preset.minHoldDurationMs
+    preset.minHoldDurationMs,
+    preset.holdMaxDurationMs,
+    preset.holdDemergePercent
   );
 
   return {

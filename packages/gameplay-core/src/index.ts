@@ -6,6 +6,10 @@ import type {
   Note,
   ScoreEvent,
 } from "@spotifyhero/shared-types";
+import {
+  noteHeadTimeMs,
+  noteTailTimeMs,
+} from "./chartTiming.js";
 // Use Web Crypto randomUUID (available in Node ≥19 and all modern browsers)
 
 // ---------------------------------------------------------------------------
@@ -95,13 +99,21 @@ interface ActiveHoldState {
  *
  * Usage:
  *   const engine = new ScoringEngine(chart);
+ *   const engine = new ScoringEngine(chart, { chartLeadInMs: 4000 });
  *   engine.onNoteHit(noteIndex, actualTimeMs); // user/autoplay pressed
  *   engine.onNoteMissed(noteIndex);            // window expired
  *   engine.finalize();                         // → GameSession
  */
+export type ScoringEngineOptions = {
+  windows?: HitWindows;
+  /** Shift note heads (and hold geometry) forward in playback time — runway before first hit. */
+  chartLeadInMs?: number;
+};
+
 export class ScoringEngine {
   private readonly chart: Chart;
   private readonly windows: HitWindows;
+  private readonly chartLeadInMs: number;
   private readonly sessionId: string;
 
   private score = 0;
@@ -120,10 +132,15 @@ export class ScoringEngine {
     miss: 0,
   };
 
-  constructor(chart: Chart, windows: HitWindows = DEFAULT_HIT_WINDOWS) {
+  constructor(chart: Chart, opts?: ScoringEngineOptions) {
     this.chart = chart;
-    this.windows = windows;
+    this.windows = opts?.windows ?? DEFAULT_HIT_WINDOWS;
+    this.chartLeadInMs = opts?.chartLeadInMs ?? 0;
     this.sessionId = globalThis.crypto.randomUUID();
+  }
+
+  private headTime(note: Note): number {
+    return noteHeadTimeMs(note, this.chartLeadInMs);
   }
 
   get currentScore(): number {
@@ -186,7 +203,7 @@ export class ScoringEngine {
     if (!note || this.resolvedNotes.has(noteIndex)) return null;
     if (this.activeHolds.has(noteIndex)) return null;
 
-    const deltaMs = actualTimeMs - note.timeMs;
+    const deltaMs = actualTimeMs - this.headTime(note);
     const judgement = judgeHit(deltaMs, this.windows);
 
     if (note.durationMs <= 0) {
@@ -247,7 +264,9 @@ export class ScoringEngine {
     this.score += pointsHead;
     this.applyJudgementForAccuracy(judgement, true);
 
-    const checkpoints = holdCheckpointTimes(note);
+    const checkpoints = holdCheckpointTimes(note).map(
+      (t) => t + this.chartLeadInMs
+    );
     this.activeHolds.set(noteIndex, {
       lane: note.lane,
       checkpointTimes: checkpoints,
@@ -261,6 +280,7 @@ export class ScoringEngine {
       pointsAwarded: pointsHead,
       combo: this.combo,
       countsTowardAccuracy: true,
+      showHitFx: false,
     };
     this.pushEvent(event);
     return event;
@@ -281,14 +301,14 @@ export class ScoringEngine {
         continue;
       }
 
-      const endMs = note.timeMs + note.durationMs;
+      const endMs = noteTailTimeMs(note, this.chartLeadInMs);
       const tailTime = hold.checkpointTimes[hold.checkpointTimes.length - 1] ?? endMs;
 
       if (!autoplay) {
         const pressed = laneHeld![hold.lane] ?? false;
         if (
           !pressed &&
-          actualTimeMs >= note.timeMs &&
+          actualTimeMs >= this.headTime(note) &&
           actualTimeMs < tailTime
         ) {
           const ev = this.failActiveHold(noteIndex);
@@ -309,8 +329,6 @@ export class ScoringEngine {
           continue outer;
         }
 
-        this.combo += 1;
-        if (this.combo > this.maxCombo) this.maxCombo = this.combo;
         const mult = getComboMultiplier(this.combo);
         const tickPoints = HOLD_TICK_BASE_POINTS * mult;
         this.score += tickPoints;
@@ -321,6 +339,7 @@ export class ScoringEngine {
           pointsAwarded: tickPoints,
           combo: this.combo,
           countsTowardAccuracy: false,
+          showHitFx: atTail,
         };
         this.pushEvent(tickEv);
         out.push(tickEv);
@@ -347,7 +366,7 @@ export class ScoringEngine {
       if (!note) continue;
       if (note.durationMs > 0 && this.activeHolds.has(i)) continue;
 
-      if (positionMs - note.timeMs > this.windows.bad) {
+      if (positionMs - this.headTime(note) > this.windows.bad) {
         const ev = this.onNoteMissed(i);
         if (ev) out.push(ev);
       }
@@ -462,15 +481,18 @@ export class NoteWindowManager {
   private readonly lookAheadMs: number;
   /** Miss window – notes this far past without hit are marked missed. */
   private readonly hitWindows: HitWindows;
+  private readonly chartLeadInMs: number;
 
   constructor(
     chart: Chart,
     lookAheadMs = 2000,
-    hitWindows: HitWindows = DEFAULT_HIT_WINDOWS
+    hitWindows: HitWindows = DEFAULT_HIT_WINDOWS,
+    chartLeadInMs = 0
   ) {
     this.chart = chart;
     this.lookAheadMs = lookAheadMs;
     this.hitWindows = hitWindows;
+    this.chartLeadInMs = chartLeadInMs;
   }
 
   /**
@@ -482,7 +504,8 @@ export class NoteWindowManager {
     for (let i = 0; i < this.chart.notes.length; i++) {
       const note = this.chart.notes[i];
       if (!note) continue;
-      const delta = positionMs - note.timeMs;
+      const head = noteHeadTimeMs(note, this.chartLeadInMs);
+      const delta = positionMs - head;
       if (Math.abs(delta) <= this.hitWindows.perfect) {
         results.push({ index: i, note });
       }
@@ -496,8 +519,9 @@ export class NoteWindowManager {
     for (let i = 0; i < this.chart.notes.length; i++) {
       const note = this.chart.notes[i];
       if (!note) continue;
-      const endMs = note.durationMs > 0 ? note.timeMs + note.durationMs : note.timeMs;
-      const headOk = note.timeMs - positionMs <= this.lookAheadMs;
+      const head = noteHeadTimeMs(note, this.chartLeadInMs);
+      const endMs = noteTailTimeMs(note, this.chartLeadInMs);
+      const headOk = head - positionMs <= this.lookAheadMs;
       const tailOk = endMs >= positionMs - this.hitWindows.bad;
       if (headOk && tailOk) {
         results.push({ index: i, note });
@@ -516,7 +540,8 @@ export class NoteWindowManager {
       if (alreadyJudged.has(i)) continue;
       const note = this.chart.notes[i];
       if (!note) continue;
-      if (positionMs - note.timeMs > this.hitWindows.bad) {
+      const head = noteHeadTimeMs(note, this.chartLeadInMs);
+      if (positionMs - head > this.hitWindows.bad) {
         results.push({ index: i, note });
       }
     }
@@ -527,3 +552,5 @@ export class NoteWindowManager {
     this.nextNoteIndex = 0;
   }
 }
+
+export * from "./chartTiming.js";

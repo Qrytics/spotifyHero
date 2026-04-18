@@ -102,6 +102,17 @@ describe("mergeAdjacentHoldNotes", () => {
     expect(easyOut).toHaveLength(2);
     expect(easyOut.every((n) => n.durationMs === 0)).toBe(true);
   });
+
+  it("with holdDemergePercent 100, eligible chain stays taps", () => {
+    const notes: Note[] = [
+      { timeMs: 1000, lane: 0, durationMs: 0 },
+      { timeMs: 1250, lane: 0, durationMs: 0 },
+      { timeMs: 1500, lane: 0, durationMs: 0 },
+    ];
+    const out = mergeAdjacentHoldNotes(notes, gapMin, gapMax, minHold, 1400, 100);
+    expect(out).toHaveLength(3);
+    expect(out.every((n) => n.durationMs === 0)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

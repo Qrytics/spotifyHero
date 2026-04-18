@@ -1,14 +1,17 @@
 import React from "react";
+import { countChartTapsAndHolds } from "@spotifyhero/gameplay-core";
 import { useGameStore } from "../store/gameStore.js";
 
 export function ResultsScreen(): React.ReactElement {
   const session = useGameStore((s) => s.session);
   const resetRound = useGameStore((s) => s.resetRound);
   const playback = useGameStore((s) => s.playback);
+  const chart = useGameStore((s) => s.chart);
 
   if (!session) return <></>;
 
   const pct = Math.round(session.accuracy * 100);
+  const kinds = chart ? countChartTapsAndHolds(chart) : null;
   const trackName = playback?.track?.name ?? "Unknown";
 
   return (
@@ -31,6 +34,11 @@ export function ResultsScreen(): React.ReactElement {
       <div style={{ fontSize: "11px", color: "var(--accent)" }}>
         {pct}% accuracy · ×{session.maxCombo} max combo
       </div>
+      {kinds !== null && (
+        <div style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+          {kinds.taps} tap notes · {kinds.holds} sustain notes
+        </div>
+      )}
 
       <div
         style={{

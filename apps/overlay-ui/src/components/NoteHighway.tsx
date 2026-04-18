@@ -1,5 +1,10 @@
 import React, { useRef, useEffect } from "react";
 import type { Judgement, Note } from "@spotifyhero/shared-types";
+import {
+  CHART_LEAD_IN_MS,
+  noteHeadTimeMs,
+  noteTailTimeMs,
+} from "@spotifyhero/gameplay-core";
 import { useGameStore } from "../store/gameStore.js";
 import { playbackClock } from "../lib/playbackClock.js";
 
@@ -40,6 +45,8 @@ const HIT_FX_MS = 480;
 const HIT_RING_EXPANSION = 56;
 /** Past this Y (CSS px) the note is considered off-screen downward. */
 const OFF_SCREEN_BOTTOM_PAD = 24;
+/** Only clear hold strips after musical tail + buffer (never geometry-only — that hid active sustains). */
+const HOLD_STRIP_GHOST_SWEEP_MS = 520;
 
 type HitFx = { lane: number; judgement: Judgement; t0: number };
 
@@ -139,14 +146,28 @@ export function NoteHighway(): React.ReactElement {
       const ev = state.lastScoreEvent;
       const ch = state.chart;
       if (!ev || !ch?.notes[ev.noteIndex]) return;
-      const sig = `${ev.noteIndex}:${ev.judgement}:${ev.pointsAwarded}:${ev.combo}`;
+      const sig = `${ev.noteIndex}:${ev.judgement}:${ev.pointsAwarded}:${ev.combo}:${ev.deltaMs}:${ev.showHitFx ?? ""}:${ev.countsTowardAccuracy ?? ""}`;
       if (sig === lastEventSig) return;
       lastEventSig = sig;
-      const lane = ch.notes[ev.noteIndex]!.lane;
-      hitEffects.push({ lane, judgement: ev.judgement, t0: performance.now() });
-      if (hitEffects.length > 14) hitEffects.splice(0, hitEffects.length - 14);
-
       const note = ch.notes[ev.noteIndex]!;
+      const lane = note.lane;
+
+      /** Sustain interior/tail ticks omit accuracy; only the tail tick sets `showHitFx: true`. */
+      const isHoldSustainSuccessTick =
+        note.durationMs > 0 &&
+        ev.countsTowardAccuracy === false &&
+        (ev.judgement === "perfect" ||
+          ev.judgement === "great" ||
+          ev.judgement === "good");
+
+      const allowHitBurst = isHoldSustainSuccessTick
+        ? ev.showHitFx === true
+        : ev.showHitFx !== false;
+
+      if (allowHitBurst) {
+        hitEffects.push({ lane, judgement: ev.judgement, t0: performance.now() });
+        if (hitEffects.length > 14) hitEffects.splice(0, hitEffects.length - 14);
+      }
       const idx = ev.noteIndex;
       const good =
         ev.judgement === "perfect" ||
@@ -167,11 +188,17 @@ export function NoteHighway(): React.ReactElement {
         visibility.missSlide.delete(idx);
         return;
       }
-      // Hold: head row only (not sustain tick events)
-      if (ev.countsTowardAccuracy !== false) {
-        visibility.holdNoHead.add(idx);
-        visibility.missSlide.delete(idx);
+      // Sustain ticks (interior + tail): each tick has a unique `sig` via `deltaMs`.
+      if (isHoldSustainSuccessTick) {
+        if (ev.showHitFx === true) {
+          visibility.holdNoHead.delete(idx);
+          visibility.missSlide.delete(idx);
+        }
+        return;
       }
+      // Hold head
+      visibility.holdNoHead.add(idx);
+      visibility.missSlide.delete(idx);
     });
 
     const rebuildStatic = (
@@ -242,7 +269,20 @@ export function NoteHighway(): React.ReactElement {
       ctx.drawImage(off, 0, 0);
 
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      paintNotes(ctx, sortedNotesRef.current, pos, lw, lh, visibility);
+      const spd = Math.min(
+        5,
+        Math.max(0.45, state.settings.noteScrollSpeed ?? 1)
+      );
+      const lookAheadEffective = LOOK_AHEAD_MS / spd;
+      paintNotes(
+        ctx,
+        sortedNotesRef.current,
+        pos,
+        lw,
+        lh,
+        visibility,
+        lookAheadEffective
+      );
       paintHitEffects(ctx, lw, lh, hitEffects, performance.now());
     };
 
@@ -354,22 +394,23 @@ function paintNotes(
   positionMs: number,
   width: number,
   height: number,
-  vis: NoteVisibility
+  vis: NoteVisibility,
+  lookAheadMs: number
 ): void {
   const n = notes.length;
   if (n === 0) return;
 
   const laneWidth = width / LANE_COUNT;
   const hitLineY = hitLineYFromHeight(height);
-  const pxPerMs = hitLineY / LOOK_AHEAD_MS;
+  const pxPerMs = hitLineY / lookAheadMs;
 
   const tLow = positionMs - LOOK_BACK_MS;
-  const tHigh = positionMs + LOOK_AHEAD_MS + SCROLL_IN_EXTRA_MS;
-  let i = lowerBoundTime(notes, tLow);
+  const tHigh = positionMs + lookAheadMs + SCROLL_IN_EXTRA_MS;
+  const L = CHART_LEAD_IN_MS;
+  let i = lowerBoundTime(notes, tLow - L);
   while (i > 0) {
     const prev = notes[i - 1]!;
-    const prevEnd =
-      prev.durationMs > 0 ? prev.timeMs + prev.durationMs : prev.timeMs;
+    const prevEnd = noteTailTimeMs(prev, L);
     if (prevEnd >= tLow) i -= 1;
     else break;
   }
@@ -381,13 +422,14 @@ function paintNotes(
     if (vis.goneTap.has(i)) continue;
     if (vis.missSlide.has(i)) continue;
 
-    const endMs = note.durationMs > 0 ? note.timeMs + note.durationMs : note.timeMs;
+    const headT = noteHeadTimeMs(note, L);
+    const endMs = noteTailTimeMs(note, L);
 
-    if (note.timeMs > tHigh) break;
+    if (headT > tHigh) break;
 
     if (endMs < tLow) continue;
 
-    const timeUntil = note.timeMs - positionMs;
+    const timeUntil = headT - positionMs;
     const lane = note.lane;
     const cx = lane * laneWidth + laneWidth / 2;
     const cy = hitLineY - timeUntil * pxPerMs;
@@ -443,15 +485,21 @@ function paintNotes(
       vis.holdNoHead.delete(idx);
       continue;
     }
-    const endMs = note.timeMs + note.durationMs;
-    const timeUntilTail = endMs - positionMs;
-    const cyTail = hitLineY - timeUntilTail * pxPerMs;
-    if (cyTail > height + OFF_SCREEN_BOTTOM_PAD) {
+    const endMs = noteTailTimeMs(note, CHART_LEAD_IN_MS);
+    if (positionMs >= endMs + HOLD_STRIP_GHOST_SWEEP_MS) {
       vis.holdNoHead.delete(idx);
     }
   }
 
-  paintMissSlidingNotes(ctx, notes, positionMs, width, height, vis.missSlide);
+  paintMissSlidingNotes(
+    ctx,
+    notes,
+    positionMs,
+    width,
+    height,
+    vis.missSlide,
+    lookAheadMs
+  );
 }
 
 /** Missed / bad notes: keep scrolling until past the bottom edge, then drop from the set. */
@@ -461,13 +509,14 @@ function paintMissSlidingNotes(
   positionMs: number,
   width: number,
   height: number,
-  missSlide: Set<number>
+  missSlide: Set<number>,
+  lookAheadMs: number
 ): void {
   if (missSlide.size === 0) return;
 
   const laneWidth = width / LANE_COUNT;
   const hitLineY = hitLineYFromHeight(height);
-  const pxPerMs = hitLineY / LOOK_AHEAD_MS;
+  const pxPerMs = hitLineY / lookAheadMs;
   const toRemove: number[] = [];
 
   for (const idx of missSlide) {
@@ -477,8 +526,9 @@ function paintMissSlidingNotes(
       continue;
     }
 
-    const endMs = note.durationMs > 0 ? note.timeMs + note.durationMs : note.timeMs;
-    const timeUntil = note.timeMs - positionMs;
+    const headT = noteHeadTimeMs(note, CHART_LEAD_IN_MS);
+    const endMs = noteTailTimeMs(note, CHART_LEAD_IN_MS);
+    const timeUntil = headT - positionMs;
     const timeUntilTail = endMs - positionMs;
     const lane = note.lane;
     const cx = lane * laneWidth + laneWidth / 2;

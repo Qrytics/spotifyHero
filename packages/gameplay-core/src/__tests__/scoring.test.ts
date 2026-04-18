@@ -134,6 +134,42 @@ describe("ScoringEngine", () => {
     expect(session.score).toBeGreaterThan(1000);
   });
 
+  it("hold sustain ticks award points but do not increase combo", () => {
+    const holdChart: Chart = {
+      trackId: "hold-test",
+      difficulty: "medium",
+      bpm: 120,
+      generatorVersion: "test",
+      generatedAt: new Date(),
+      notes: [{ timeMs: 1000, lane: 0, durationMs: 1200 }],
+    };
+    const eng = new ScoringEngine(holdChart);
+    eng.onNoteHit(0, 1000);
+    expect(eng.currentCombo).toBe(1);
+    eng.advanceHolds(1400, [true, false, false, false]);
+    expect(eng.currentCombo).toBe(1);
+    eng.advanceHolds(2200, [true, false, false, false]);
+    expect(eng.currentCombo).toBe(1);
+    eng.advanceHolds(1000 + 1200, [true, false, false, false]);
+    expect(eng.currentCombo).toBe(1);
+  });
+
+  it("chart lead-in shifts miss window", () => {
+    const c = makeChart([1000]);
+    const eng = new ScoringEngine(c, { chartLeadInMs: 4000 });
+    const head = 5000;
+    const beforeMiss = head + DEFAULT_HIT_WINDOWS.bad;
+    expect(eng.evaluateMisses(beforeMiss)).toHaveLength(0);
+    expect(eng.evaluateMisses(beforeMiss + 1)).toHaveLength(1);
+  });
+
+  it("chart lead-in shifts on-time hit", () => {
+    const c = makeChart([1000]);
+    const eng = new ScoringEngine(c, { chartLeadInMs: 4000 });
+    const hit = eng.onNoteHit(0, 5000);
+    expect(hit?.judgement).toBe("perfect");
+  });
+
   it("fails an active hold when the lane is released early", () => {
     const holdChart: Chart = {
       trackId: "hold-test",

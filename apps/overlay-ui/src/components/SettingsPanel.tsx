@@ -183,6 +183,39 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
           </select>
         </div>
 
+        <div>
+          <label style={labelStyle}>Note scroll speed</label>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <input
+              type="range"
+              style={{ flex: 1, minWidth: 0 }}
+              min={0.45}
+              max={5}
+              step={0.05}
+              value={draft.noteScrollSpeed}
+              onChange={(e) =>
+                set("noteScrollSpeed")(parseFloat(e.target.value))
+              }
+              aria-valuemin={0.45}
+              aria-valuemax={5}
+            />
+            <span
+              style={{
+                fontSize: "10px",
+                fontWeight: 700,
+                color: "var(--accent)",
+                width: "38px",
+                flexShrink: 0,
+              }}
+            >
+              {draft.noteScrollSpeed.toFixed(2)}×
+            </span>
+          </div>
+          <span style={{ fontSize: "8px", color: "#666", marginTop: "2px", display: "block" }}>
+            Higher = notes move faster toward the hit line.
+          </span>
+        </div>
+
         <label
           style={{
             display: "flex",
