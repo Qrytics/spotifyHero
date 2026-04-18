@@ -8,11 +8,11 @@
 ## Hit windows (default, ±ms)
 | Judgement | Window |
 |-----------|--------|
-| Perfect   | ±22 ms |
-| Great     | ±45 ms |
-| Good      | ±90 ms |
-| Bad       | ±135 ms |
-| Miss      | > 135 ms |
+| Perfect   | ±38 ms |
+| Great     | ±58 ms |
+| Good      | ±105 ms |
+| Bad       | ±150 ms |
+| Miss      | > 150 ms |
 
 ## Scoring
 ```

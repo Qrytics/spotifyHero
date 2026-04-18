@@ -1,7 +1,7 @@
 use crate::spotify::{
     clear_tokens, ensure_access_token, fetch_current_playback, fetch_current_user,
-    fetch_followed_user_ids, idle_playback, load_store, run_login, PlaybackStatePayload,
-    SpotifyUserPayload,
+    fetch_followed_user_ids, idle_playback, load_store, run_login, spotify_client_id,
+    PlaybackStatePayload, SpotifyUserPayload,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -35,9 +35,7 @@ async fn spotify_playback_command(
     app: &tauri::AppHandle,
     endpoint: &str,
 ) -> Result<(), String> {
-    let Ok(client_id) = std::env::var("SPOTIFY_CLIENT_ID") else {
-        return Ok(());
-    };
+    let client_id = spotify_client_id();
     let http = http_client();
     let Some(access) = ensure_access_token(app, http, &client_id).await? else {
         return Ok(());
@@ -68,10 +66,6 @@ async fn spotify_playback_command(
 /// Clicking again aborts any in-flight login so the user can reopen Spotify after closing the tab.
 #[command]
 pub async fn spotify_login(app: tauri::AppHandle) -> Result<(), String> {
-    std::env::var("SPOTIFY_CLIENT_ID").map_err(|_| {
-        "Missing SPOTIFY_CLIENT_ID. Add it to apps/desktop/src-tauri/.env".to_string()
-    })?;
-
     let mut guard = oauth_task_slot().lock().await;
     if let Some(h) = guard.take() {
         h.abort();
@@ -120,9 +114,7 @@ pub async fn spotify_connection_status(
 /// Poll Spotify Web API for the active player (Premium + active device recommended).
 #[command]
 pub async fn get_playback_state(app: tauri::AppHandle) -> Result<PlaybackStatePayload, String> {
-    let Ok(client_id) = std::env::var("SPOTIFY_CLIENT_ID") else {
-        return Ok(idle_playback());
-    };
+    let client_id = spotify_client_id();
 
     let http = http_client();
     let Some(access) = ensure_access_token(&app, http, &client_id).await? else {
@@ -148,9 +140,7 @@ pub async fn get_playback_state(app: tauri::AppHandle) -> Result<PlaybackStatePa
 pub async fn get_spotify_user_profile(
     app: tauri::AppHandle,
 ) -> Result<Option<SpotifyUserPayload>, String> {
-    let Ok(client_id) = std::env::var("SPOTIFY_CLIENT_ID") else {
-        return Ok(None);
-    };
+    let client_id = spotify_client_id();
     let http = http_client();
     fetch_current_user(&app, http, &client_id).await
 }
@@ -158,9 +148,7 @@ pub async fn get_spotify_user_profile(
 /// Spotify user IDs you follow (`user-follow-read`). Used for friend leaderboards.
 #[command]
 pub async fn get_spotify_followed_user_ids(app: tauri::AppHandle) -> Result<Vec<String>, String> {
-    let Ok(client_id) = std::env::var("SPOTIFY_CLIENT_ID") else {
-        return Ok(Vec::new());
-    };
+    let client_id = spotify_client_id();
     let http = http_client();
     fetch_followed_user_ids(&app, http, &client_id).await
 }

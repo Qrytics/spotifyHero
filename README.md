@@ -144,14 +144,11 @@ In manual mode, press **D F J K** to hit notes in lanes 0–3.
 - **Tauri CLI v2** – `cargo install tauri-cli --version "^2"`
 - **System webkit** (Linux: `libwebkit2gtk-4.1`, Windows: WebView2, macOS: built-in)
 
-### Spotify developer credentials
-1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
-2. Create an app, set redirect URI to **`http://127.0.0.1:8888/callback`** (must match `apps/desktop/src-tauri`).
-3. Copy the **Client ID**.
-4. Create `apps/desktop/src-tauri/.env` (gitignored):
-   ```
-   SPOTIFY_CLIENT_ID=your_client_id_here
-   ```
+### Spotify (no `.env` required)
+The **Spotify Client ID** for this project is built into the desktop app (`apps/desktop/src-tauri/src/spotify/config.rs`). It is a public identifier (PKCE); you do **not** need to create your own Spotify app to clone and play.
+
+1. In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), the **spotifyHero** app that uses this client ID must list redirect URI **`http://127.0.0.1:8888/callback`** (exact match). That is a one-time setup for whoever maintains the app; contributors and friends do not paste credentials.
+2. **Optional:** To use your own Spotify app instead, create `apps/desktop/src-tauri/.env` (gitignored) with `SPOTIFY_CLIENT_ID=...` and set the same redirect URI on that app.
 
 ### Supabase (optional – for leaderboards)
 1. Create a free [Supabase](https://supabase.com) project.
@@ -196,22 +193,30 @@ pnpm lint
 
 ## Building for distribution
 
-### Itch.io build
-```bash
-# Build the overlay UI first
-pnpm --filter overlay-ui build
+### Itch.io (build + upload)
 
-# Then build the Tauri native app (produces platform installer)
-pnpm --filter desktop build
-# or: cd apps/desktop && npx tauri build
+**One-time:** install [butler](https://itch.io/docs/butler/installing.html), run `butler login`, and create a game on [itch.io](https://itch.io) (note the URL slug, e.g. `spotifyhero` in `https://yoursite.itch.io/spotifyhero`).
+
+**Config:** copy `scripts/itch.env.example` to `scripts/itch.env` and set `ITCH_USER` and `ITCH_GAME` (or set those env vars in your shell).
+
+**Ship a Windows build:**
+
+```bash
+pnpm itch:release
 ```
 
-Installers appear in `apps/desktop/src-tauri/target/release/bundle/`:
-- macOS: `.dmg` / `.app`
-- Windows: `.msi` / `.exe` (NSIS)
-- Linux: `.deb` / `.AppImage`
+That runs `pnpm build:desktop` (overlay UI + Tauri NSIS installer) then `butler push` to the `windows` channel with the version from `apps/desktop/src-tauri/tauri.conf.json`. After upload, mark the file as the **Windows** executable in the itch editor if it asks.
 
-Upload the appropriate file to your [Itch.io](https://itch.io) project page.
+**Manual build only** (upload later with `pnpm itch:push`):
+
+```bash
+pnpm build:desktop
+```
+
+Installers appear under `apps/desktop/src-tauri/target/release/bundle/`:
+- Windows: `.exe` (NSIS) in `bundle/nsis/`
+- macOS: `.dmg` / `.app`
+- Linux: `.deb` / `.AppImage`
 
 ### Steam (future)
 Planned via `steamworks-rs` crate. Achievements and cloud save hooks are stubs in `commands.rs`.

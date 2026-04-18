@@ -10,6 +10,7 @@ apps/desktop/src-tauri/target/
 .env
 .env.local
 .env.*.local
+scripts/itch.env
 
 # OS noise
 .DS_Store

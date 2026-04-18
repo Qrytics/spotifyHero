@@ -35,10 +35,10 @@ const AFK_MISS_THRESHOLD = 5;
  */
 const SUSTAIN_LANE_HELD_GRACE_MS = 55;
 const EXPERT_HIT_WINDOWS = {
-  perfect: 18,
-  great: 36,
-  good: 72,
-  bad: 112,
+  perfect: 28,
+  great: 46,
+  good: 86,
+  bad: 128,
 } as const;
 
 function allNotesResolved(engine: ScoringEngine, chart: Chart): boolean {

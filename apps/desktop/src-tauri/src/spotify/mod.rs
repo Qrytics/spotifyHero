@@ -1,9 +1,11 @@
+pub mod config;
 pub mod oauth;
 pub mod playback;
 pub mod tokens;
 pub mod types;
 pub mod user;
 
+pub use config::spotify_client_id;
 pub use oauth::run_login;
 pub use playback::{fetch_current_playback, idle_playback};
 pub use tokens::{clear_tokens, ensure_access_token, load_store};

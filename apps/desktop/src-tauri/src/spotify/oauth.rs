@@ -1,5 +1,6 @@
 //! PKCE OAuth — browser + `http://127.0.0.1:8888/callback`.
 
+use crate::spotify::config::spotify_client_id;
 use crate::spotify::tokens::{load_store, save_tokens};
 use crate::spotify::types::TokenResponse;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -110,9 +111,7 @@ async fn exchange_code(
 }
 
 pub async fn run_login<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
-    let client_id = std::env::var("SPOTIFY_CLIENT_ID").map_err(|_| {
-        "Missing SPOTIFY_CLIENT_ID. Add it to apps/desktop/src-tauri/.env".to_string()
-    })?;
+    let client_id = spotify_client_id();
 
     let verifier = pkce_verifier();
     let challenge = pkce_challenge(&verifier);

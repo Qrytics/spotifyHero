@@ -17,10 +17,10 @@ import {
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_HIT_WINDOWS: HitWindows = {
-  perfect: 22,
-  great: 45,
-  good: 90,
-  bad: 135,
+  perfect: 38,
+  great: 58,
+  good: 105,
+  bad: 150,
 };
 
 // Points awarded per judgement

@@ -6,6 +6,7 @@
 - PKCE OAuth 2.0.
 - Scopes required: `user-read-playback-state`, `user-read-currently-playing`, `user-modify-playback-state`, `user-read-email` (profile + leaderboard name), `user-follow-read` (friend leaderboard via Spotify people you follow).
 - Redirect URI: `http://127.0.0.1:8888/callback` (loopback, no HTTPS needed for desktop).
+- Client ID: default is embedded in `apps/desktop/src-tauri/src/spotify/config.rs` (public; PKCE). Set env `SPOTIFY_CLIENT_ID` only to override with another Spotify app.
 - After changing scopes, the user must **disconnect and connect Spotify again** so Spotify issues a token with the new scopes.
 - Tokens stored via `tauri-plugin-store` (encrypted on macOS via Keychain).
 
