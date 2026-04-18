@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useGameStore } from "../store/gameStore.js";
+import { toggleSpotifyDebugPanel } from "../lib/spotifyDiagnostics.js";
 
 /**
  * useKeybinds
@@ -21,6 +22,16 @@ export function useKeybinds(): void {
       // Prevent key repeat spam
       if (e.repeat) return;
       const key = e.key.toLowerCase();
+
+      if (e.ctrlKey && e.shiftKey && key === "d") {
+        const el = e.target as HTMLElement | null;
+        if (el?.closest?.("input, textarea, [contenteditable=true]")) {
+          return;
+        }
+        e.preventDefault();
+        toggleSpotifyDebugPanel();
+        return;
+      }
 
       // Toggle autoplay ↔ manual
       if (key === playKeybind.toLowerCase()) {

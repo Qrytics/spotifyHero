@@ -76,22 +76,37 @@ export const useGameStore = create<GameState>((set, get) => ({
   setPhase: (phase) => set({ phase }),
 
   setPlayback: (playback) => {
-    const current = get().playback;
-    const changed =
-      !current ||
-      current.isPlaying !== playback.isPlaying ||
-      current.trackId !== playback.trackId;
+    const prevTrackId = get().playback?.trackId ?? null;
+    const nextTrackId = playback.trackId;
+    const trackChanged = prevTrackId !== nextTrackId;
 
     set({ playback });
 
-    if (changed && playback.isPlaying && playback.trackId) {
-      // New track started → trigger chart generation (handled by hook)
-      set({ phase: "loading" });
-    } else if (!playback.isPlaying) {
+    if (!playback.isPlaying || !nextTrackId) {
       const phase = get().phase;
       if (phase === "autoplay" || phase === "manual") {
         set({ phase: "paused" });
       }
+      return;
+    }
+
+    const chart = get().chart;
+    const chartMatches = chart?.trackId === nextTrackId;
+    const needsNewChart = trackChanged || !chartMatches;
+
+    if (needsNewChart) {
+      set({ phase: "loading" });
+      return;
+    }
+
+    const phaseNow = get().phase;
+    const preferAutoplay = get().settings.autoplay;
+    const playPhase: GamePhase = preferAutoplay ? "autoplay" : "manual";
+
+    if (phaseNow === "paused") {
+      set({ phase: playPhase });
+    } else if (phaseNow === "idle") {
+      set({ phase: playPhase });
     }
   },
 

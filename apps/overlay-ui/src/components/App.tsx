@@ -8,6 +8,7 @@ import { useSpotifySync } from "../hooks/useSpotifySync.js";
 import { useChartGeneration } from "../hooks/useChartGeneration.js";
 import { useGameLoop } from "../hooks/useGameLoop.js";
 import { useKeybinds } from "../hooks/useKeybinds.js";
+import { SpotifyDiagnosticsPanel } from "./SpotifyDiagnosticsPanel.js";
 
 export function App(): React.ReactElement {
   const phase = useGameStore((s) => s.phase);
@@ -53,6 +54,7 @@ export function App(): React.ReactElement {
 
       {phase === "results" && <ResultsScreen />}
       {phase === "idle" && <IdleScreen />}
+      <SpotifyDiagnosticsPanel />
     </div>
   );
 }

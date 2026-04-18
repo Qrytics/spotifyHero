@@ -40,9 +40,6 @@ function createDefaultPoller(): SpotifyPoller {
  */
 export function useSpotifySync(poller?: SpotifyPoller): void {
   const correctorRef = useRef(new DriftCorrector());
-  // Capture a stable ref to the store action so the effect closure stays valid
-  // without needing to re-register the polling handler on every render.
-  const setPlaybackRef = useRef(useGameStore.getState().setPlayback);
 
   useEffect(() => {
     const p: SpotifyPoller = poller ?? createDefaultPoller();

@@ -101,8 +101,9 @@ async fn exchange_code(
         .map_err(|e| e.to_string())?;
 
     if !res.status().is_success() {
+        let status = res.status();
         let txt = res.text().await.unwrap_or_default();
-        return Err(format!("Token exchange failed ({}): {}", res.status(), txt));
+        return Err(format!("Token exchange failed ({}): {}", status, txt));
     }
 
     res.json::<TokenResponse>().await.map_err(|e| e.to_string())
@@ -110,7 +111,7 @@ async fn exchange_code(
 
 pub async fn run_login<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     let client_id = std::env::var("SPOTIFY_CLIENT_ID").map_err(|_| {
-        "Missing SPOTIFY_CLIENT_ID. Add it to apps/desktop/src-tauri/.env".into()
+        "Missing SPOTIFY_CLIENT_ID. Add it to apps/desktop/src-tauri/.env".to_string()
     })?;
 
     let verifier = pkce_verifier();

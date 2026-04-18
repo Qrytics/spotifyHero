@@ -8,8 +8,9 @@ export const SpotifyTrackSchema = z.object({
   id: z.string(),
   name: z.string(),
   artists: z.array(z.string()),
-  albumArt: z.string().url().optional(),
-  durationMs: z.number().int().positive(),
+  /** Spotify image URLs are usually https; avoid strict URL() validation (browser vs Node edge cases). */
+  albumArt: z.string().optional(),
+  durationMs: z.coerce.number().int().positive(),
   bpm: z.number().positive().optional(),
 });
 
@@ -144,7 +145,7 @@ export type BeatEvent = z.infer<typeof BeatEventSchema>;
 
 export const PlaybackStateSchema = z.object({
   isPlaying: z.boolean(),
-  positionMs: z.number().nonnegative(),
+  positionMs: z.coerce.number().nonnegative(),
   trackId: z.string().nullable(),
   track: SpotifyTrackSchema.nullable(),
 });

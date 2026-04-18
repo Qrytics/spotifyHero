@@ -6,8 +6,25 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use tauri::command;
+use tokio::sync::Mutex as TokioMutex;
+use tokio::task::JoinHandle;
 
 static HTTP: OnceLock<Client> = OnceLock::new();
+
+/// In-flight OAuth task so a new "Connect Spotify" click can abort the previous attempt
+/// (e.g. user closed the browser tab) and bind :8888 again.
+static SPOTIFY_OAUTH_TASK: OnceLock<TokioMutex<Option<JoinHandle<()>>>> = OnceLock::new();
+
+fn oauth_task_slot() -> &'static TokioMutex<Option<JoinHandle<()>>> {
+    SPOTIFY_OAUTH_TASK.get_or_init(|| TokioMutex::new(None))
+}
+
+async fn abort_spotify_oauth() {
+    let mut guard = oauth_task_slot().lock().await;
+    if let Some(h) = guard.take() {
+        h.abort();
+    }
+}
 
 fn http_client() -> &'static Client {
     HTTP.get_or_init(Client::new)
@@ -17,14 +34,33 @@ fn http_client() -> &'static Client {
 // Spotify
 // ---------------------------------------------------------------------------
 
-/// Browser PKCE login; saves tokens to the plugin store.
+/// Starts browser PKCE login in the background and returns immediately.
+/// Clicking again aborts any in-flight login so the user can reopen Spotify after closing the tab.
 #[command]
 pub async fn spotify_login(app: tauri::AppHandle) -> Result<(), String> {
-    run_login(app).await
+    std::env::var("SPOTIFY_CLIENT_ID").map_err(|_| {
+        "Missing SPOTIFY_CLIENT_ID. Add it to apps/desktop/src-tauri/.env".to_string()
+    })?;
+
+    let mut guard = oauth_task_slot().lock().await;
+    if let Some(h) = guard.take() {
+        h.abort();
+    }
+
+    let app_spawn = app.clone();
+    let handle = tokio::spawn(async move {
+        if let Err(e) = run_login(app_spawn).await {
+            eprintln!("[spotifyHero] Spotify login failed: {}", e);
+        }
+    });
+    *guard = Some(handle);
+
+    Ok(())
 }
 
 #[command]
 pub async fn spotify_logout(app: tauri::AppHandle) -> Result<(), String> {
+    abort_spotify_oauth().await;
     let store = load_store(&app)?;
     clear_tokens(store.as_ref())
 }
@@ -65,6 +101,8 @@ pub async fn get_playback_state(app: tauri::AppHandle) -> Result<PlaybackStatePa
             }
             Ok(idle_playback())
         }
+        // Avoid failing the IPC channel on transient limits — UI keeps last good state via poller.
+        Err(e) if e.contains("rate limited") => Ok(idle_playback()),
         Err(e) => Err(e),
     }
 }

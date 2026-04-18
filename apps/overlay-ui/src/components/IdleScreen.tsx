@@ -1,8 +1,24 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { useGameStore } from "../store/gameStore.js";
 import { invoke } from "@tauri-apps/api/core";
+import type { SpotifyPollDiagnostics } from "../lib/spotifyDiagnostics.js";
 
 type ConnectionStatus = { connected: boolean };
+
+/** Spotify returns 403 when the logged-in user is not allowlisted on a Dev-mode app dashboard. */
+function spotifyDevMode403Hint(invokeError: string | null): string | null {
+  if (!invokeError) return null;
+  const lower = invokeError.toLowerCase();
+  if (
+    invokeError.includes("403") &&
+    (lower.includes("developer.spotify.com") ||
+      lower.includes("may not be registered") ||
+      lower.includes("user management"))
+  ) {
+    return invokeError;
+  }
+  return null;
+}
 
 function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -13,7 +29,23 @@ export function IdleScreen(): React.ReactElement {
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [spotifyApi403, setSpotifyApi403] = useState<string | null>(null);
   const tauri = isTauri();
+
+  useEffect(() => {
+    if (!tauri) return;
+    const onDiag = (ev: Event) => {
+      const d = (ev as CustomEvent<SpotifyPollDiagnostics>).detail;
+      if (!d?.invokeError) {
+        setSpotifyApi403(null);
+        return;
+      }
+      const hint = spotifyDevMode403Hint(d.invokeError);
+      setSpotifyApi403(hint);
+    };
+    window.addEventListener("spotifyhero-diagnostics", onDiag);
+    return () => window.removeEventListener("spotifyhero-diagnostics", onDiag);
+  }, [tauri]);
 
   const refreshStatus = useCallback(async () => {
     if (!tauri) return;
@@ -29,6 +61,12 @@ export function IdleScreen(): React.ReactElement {
   useEffect(() => {
     void refreshStatus();
   }, [refreshStatus]);
+
+  useEffect(() => {
+    if (!tauri) return;
+    const id = window.setInterval(() => void refreshStatus(), 4000);
+    return () => window.clearInterval(id);
+  }, [tauri, refreshStatus]);
 
   const onConnect = async () => {
     setBusy(true);
@@ -80,6 +118,9 @@ export function IdleScreen(): React.ReactElement {
               ? "Spotify linked — start playback in Spotify (Premium recommended)."
               : "Connect your Spotify account, then press play in the Spotify app."}
             <br />
+            Closed the Spotify login tab? Click <strong>Connect Spotify</strong> again to
+            reopen it.
+            <br />
             Requires an active Spotify session (Web API). Premium needed for full
             currently-playing data.
           </>
@@ -98,7 +139,53 @@ export function IdleScreen(): React.ReactElement {
           {settings.playKeybind}
         </kbd>{" "}
         to toggle manual play.
+        <br />
+        <span style={{ opacity: 0.75 }}>
+          Stuck? Press{" "}
+          <kbd style={{ background: "#222", padding: "1px 4px", borderRadius: "3px" }}>
+            Ctrl+Shift+D
+          </kbd>{" "}
+          for Spotify debug (copy JSON for support).
+        </span>
       </div>
+
+      {tauri && spotifyApi403 && (
+        <div
+          style={{
+            maxWidth: "300px",
+            marginTop: "4px",
+            padding: "10px 12px",
+            borderRadius: "8px",
+            border: "1px solid rgba(220, 160, 60, 0.55)",
+            background: "rgba(60, 45, 20, 0.45)",
+            fontSize: "10px",
+            lineHeight: 1.5,
+            color: "#e8d4b0",
+            textAlign: "left",
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: "6px", color: "#ffb84d" }}>
+            Spotify API blocked (403)
+          </div>
+          <p style={{ margin: "0 0 8px 0" }}>
+            Your app is probably in{" "}
+            <strong style={{ color: "#fff" }}>Development mode</strong> on the Spotify
+            Developer Dashboard. Add the <strong style={{ color: "#fff" }}>same email</strong>{" "}
+            you use for Spotify under{" "}
+            <strong style={{ color: "#fff" }}>Dashboard → your app → Settings → User Management</strong>
+            , then use <strong style={{ color: "#fff" }}>Disconnect</strong> and connect again
+            here.
+          </p>
+          <a
+            href="https://developer.spotify.com/dashboard"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "#8cf", fontWeight: 600 }}
+          >
+            Open Spotify Developer Dashboard
+          </a>
+        </div>
+      )}
 
       {tauri && (
         <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "6px" }}>
@@ -118,7 +205,7 @@ export function IdleScreen(): React.ReactElement {
                 color: "#0d0d0f",
               }}
             >
-              {busy ? "Opening browser…" : "Connect Spotify"}
+              {busy ? "Starting…" : "Connect Spotify"}
             </button>
           ) : (
             <button

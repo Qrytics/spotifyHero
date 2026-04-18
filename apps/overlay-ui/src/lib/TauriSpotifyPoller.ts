@@ -2,6 +2,11 @@ import { invoke } from "@tauri-apps/api/core";
 import type { SpotifyPoller } from "@spotifyhero/audio-engine";
 import type { PlaybackState } from "@spotifyhero/shared-types";
 import { PlaybackStateSchema } from "@spotifyhero/shared-types";
+import {
+  publishSpotifyDiagnostics,
+  truncateForDiagnostics,
+  type SpotifyPollDiagnostics,
+} from "./spotifyDiagnostics.js";
 
 /**
  * Polls the Tauri command `get_playback_state` (Spotify Web API on the Rust side).
@@ -37,26 +42,69 @@ export class TauriSpotifyPoller implements SpotifyPoller {
     return this.state;
   }
 
+  private pushDiag(partial: Omit<SpotifyPollDiagnostics, "updatedAt"> & { updatedAt?: string }) {
+    const d: SpotifyPollDiagnostics = {
+      updatedAt: partial.updatedAt ?? new Date().toISOString(),
+      invokeError: partial.invokeError ?? null,
+      zodFlat: partial.zodFlat ?? null,
+      raw: partial.raw ?? null,
+      parsed: partial.parsed ?? null,
+    };
+    publishSpotifyDiagnostics(d);
+  }
+
   private async tick(): Promise<void> {
+    const ts = new Date().toISOString();
     try {
       const raw = await invoke<unknown>("get_playback_state");
       const parsed = PlaybackStateSchema.safeParse(raw);
-      if (!parsed.success) return;
-      this.state = parsed.data;
-      for (const cb of this.callbacks) {
-        cb(parsed.data);
+      if (!parsed.success) {
+        if (import.meta.env.DEV) {
+          console.warn(
+            "[spotifyHero] get_playback_state JSON did not match PlaybackState:",
+            parsed.error.flatten(),
+            raw
+          );
+        }
+        this.pushDiag({
+          updatedAt: ts,
+          invokeError: null,
+          zodFlat: parsed.error.flatten() as Record<string, unknown>,
+          raw: truncateForDiagnostics(raw),
+          parsed: null,
+        });
+        return;
       }
-    } catch {
-      const idle: PlaybackState = {
-        isPlaying: false,
-        positionMs: 0,
-        trackId: null,
-        track: null,
-      };
-      this.state = idle;
+      const data = parsed.data;
+      this.pushDiag({
+        updatedAt: ts,
+        invokeError: null,
+        zodFlat: null,
+        raw: truncateForDiagnostics(raw),
+        parsed: {
+          isPlaying: data.isPlaying,
+          positionMs: data.positionMs,
+          trackId: data.trackId,
+          trackName: data.track?.name ?? null,
+        },
+      });
+      this.state = data;
       for (const cb of this.callbacks) {
-        cb(idle);
+        cb(data);
       }
+    } catch (e) {
+      // Do not force idle on network/rate-limit/command errors — that hides playback and
+      // feels "stuck". Keep the last good state until the next successful poll.
+      if (import.meta.env.DEV) {
+        console.warn("[spotifyHero] get_playback_state invoke failed:", e);
+      }
+      this.pushDiag({
+        updatedAt: ts,
+        invokeError: e instanceof Error ? e.message : String(e),
+        zodFlat: null,
+        raw: null,
+        parsed: null,
+      });
     }
   }
 }
