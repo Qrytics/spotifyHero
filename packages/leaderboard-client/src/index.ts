@@ -17,6 +17,12 @@ export interface LeaderboardClient {
     difficulty: Difficulty,
     limit?: number
   ): Promise<Leaderboard>;
+  getFriendLeaderboard(
+    trackId: string,
+    difficulty: Difficulty,
+    friendUserIds: readonly string[],
+    limit?: number
+  ): Promise<Leaderboard>;
 
   /** Submit a completed game session. */
   submitScore(session: GameSession): Promise<void>;
@@ -39,12 +45,16 @@ export interface SupabaseClientConfig {
   url: string;
   anonKey: string;
   playerName?: string;
+  accessToken?: string;
+  userId?: string;
 }
 
 export class SupabaseLeaderboardClient implements LeaderboardClient {
   private readonly baseUrl: string;
   private readonly headers: HeadersInit;
   private readonly playerName: string;
+  private readonly accessToken: string | undefined;
+  private readonly userId: string | undefined;
 
   constructor(config: SupabaseClientConfig) {
     this.baseUrl = config.url;
@@ -52,8 +62,10 @@ export class SupabaseLeaderboardClient implements LeaderboardClient {
     this.headers = {
       "Content-Type": "application/json",
       apikey: config.anonKey,
-      Authorization: `Bearer ${config.anonKey}`,
+      Authorization: `Bearer ${config.accessToken ?? config.anonKey}`,
     };
+    this.accessToken = config.accessToken;
+    this.userId = config.userId;
   }
 
   async getLeaderboard(
@@ -96,6 +108,42 @@ export class SupabaseLeaderboardClient implements LeaderboardClient {
     };
   }
 
+  async getFriendLeaderboard(
+    trackId: string,
+    difficulty: Difficulty,
+    friendUserIds: readonly string[],
+    limit = 50
+  ): Promise<Leaderboard> {
+    if (friendUserIds.length === 0) {
+      return { trackId, difficulty, entries: [], fetchedAt: new Date() };
+    }
+    const params = new URLSearchParams({
+      track_id: `eq.${trackId}`,
+      difficulty: `eq.${difficulty}`,
+      user_id: `in.(${friendUserIds.map((x) => `"${x}"`).join(",")})`,
+      order: "score.desc",
+      limit: String(limit),
+    });
+    const res = await fetch(
+      `${this.baseUrl}/rest/v1/leaderboard_entries?${params}`,
+      { headers: this.headers }
+    );
+    if (!res.ok) {
+      throw new Error(`Friend leaderboard fetch failed: ${res.status}`);
+    }
+    const rows = (await res.json()) as Array<Record<string, unknown>>;
+    const entries: LeaderboardEntry[] = rows.map((row, i) => ({
+      rank: i + 1,
+      playerName: String(row["player_name"] ?? "Anonymous"),
+      score: Number(row["score"] ?? 0),
+      accuracy: Number(row["accuracy"] ?? 0),
+      maxCombo: Number(row["max_combo"] ?? 0),
+      playedAt: new Date(String(row["played_at"])),
+      sessionId: String(row["session_id"]),
+    }));
+    return { trackId, difficulty, entries, fetchedAt: new Date() };
+  }
+
   async submitScore(session: GameSession): Promise<void> {
     const body = {
       session_id: session.id,
@@ -107,6 +155,7 @@ export class SupabaseLeaderboardClient implements LeaderboardClient {
       played_at: session.playedAt.toISOString(),
       player_name: session.playerName ?? this.playerName,
       judgements: session.judgements,
+      user_id: this.userId ?? null,
     };
 
     const res = await fetch(`${this.baseUrl}/rest/v1/leaderboard_entries`, {
@@ -189,6 +238,13 @@ export class OfflineLeaderboardClient implements LeaderboardClient {
       }));
 
     return { trackId, difficulty, entries, fetchedAt: new Date() };
+  }
+
+  async getFriendLeaderboard(
+    trackId: string,
+    difficulty: Difficulty
+  ): Promise<Leaderboard> {
+    return this.getLeaderboard(trackId, difficulty);
   }
 
   async submitScore(session: GameSession): Promise<void> {

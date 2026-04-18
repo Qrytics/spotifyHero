@@ -4,6 +4,7 @@ import { DriftCorrector, MockSpotifyPoller } from "@spotifyhero/audio-engine";
 import type { SpotifyPoller } from "@spotifyhero/audio-engine";
 import { TauriSpotifyPoller } from "../lib/TauriSpotifyPoller.js";
 import { playbackClock } from "../lib/playbackClock.js";
+import { pauseSpotifyPlayback } from "../lib/spotifyControl.js";
 
 type WindowWithMockPoller = Window & { __mockPoller?: MockSpotifyPoller };
 
@@ -15,6 +16,7 @@ function isTauriRuntime(): boolean {
 const TAURI_POLL_MS = 2800;
 const HEARTBEAT_PUSH_MS = 9000;
 const SEEK_DISCONTINUITY_MS = 2800;
+const HEARTBEAT_SYNC_DRIFT_MS = 85;
 
 function createDefaultPoller(): SpotifyPoller {
   if (isTauriRuntime()) {
@@ -69,8 +71,33 @@ export function useSpotifySync(poller?: SpotifyPoller): void {
       const shouldApply = trackChanged || playToggled || largeSeek || heartbeatDue;
       if (!shouldApply) return;
 
-      correctorRef.current.update(state.positionMs);
-      const correctedPos = correctorRef.current.correct(state.positionMs);
+      if (trackChanged) {
+        correctorRef.current.reset();
+        void pauseSpotifyPlayback();
+      }
+
+      const heartbeatOnly =
+        heartbeatDue && !trackChanged && !playToggled && !largeSeek;
+
+      let correctedPos = state.positionMs;
+      if (!heartbeatOnly) {
+        correctorRef.current.update(state.positionMs);
+        correctedPos = correctorRef.current.correct(state.positionMs);
+      }
+
+      if (
+        heartbeatOnly &&
+        Math.abs(correctedPos - playbackClock.estimateMs()) < HEARTBEAT_SYNC_DRIFT_MS
+      ) {
+        lastAppliedRef.current = {
+          isPlaying: state.isPlaying,
+          positionMs: correctedPos,
+          trackId: state.trackId,
+          emittedAtMs: nowMs,
+        };
+        return;
+      }
+
       playbackClock.sync(correctedPos, state.isPlaying, state.trackId);
       const next = { ...state, positionMs: correctedPos };
       useGameStore.getState().setPlayback(next);

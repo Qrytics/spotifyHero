@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub struct Settings {
     pub always_on_top: bool,
     pub opacity: f64,
+    pub note_scroll_speed: f64,
     pub difficulty: String,
     pub autoplay: bool,
     pub play_keybind: String,
@@ -20,6 +21,7 @@ impl Default for Settings {
         Self {
             always_on_top: true,
             opacity: 0.95,
+            note_scroll_speed: 1.0,
             difficulty: "medium".into(),
             autoplay: true,
             play_keybind: "Space".into(),

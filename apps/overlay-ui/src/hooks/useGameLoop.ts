@@ -11,6 +11,7 @@ import {
 } from "@spotifyhero/gameplay-core";
 import type { Chart } from "@spotifyhero/shared-types";
 import { playbackClock } from "../lib/playbackClock.js";
+import { resumeSpotifyPlayback } from "../lib/spotifyControl.js";
 
 /** Grace after last chart event before we treat the chart as finished. */
 const CHART_FINISH_PAD_MS = 3000;
@@ -29,6 +30,12 @@ const AFK_MISS_THRESHOLD = 5;
  * Stops one-frame gaps / OS input jitter from failing an otherwise solid long hold.
  */
 const SUSTAIN_LANE_HELD_GRACE_MS = 55;
+const EXPERT_HIT_WINDOWS = {
+  perfect: 18,
+  great: 36,
+  good: 72,
+  bad: 112,
+} as const;
 
 function allNotesResolved(engine: ScoringEngine, chart: Chart): boolean {
   for (let i = 0; i < chart.notes.length; i++) {
@@ -146,16 +153,19 @@ export function useGameLoop(): void {
     startMs: 0,
     endMs: 0,
   });
+  const countdownResumedTrackRef = useRef<string | null>(null);
+  const usedAutoplayRef = useRef(false);
 
   useEffect(() => {
     if (!chart) return;
     engineRef.current = new ScoringEngine(chart, {
+      windows: chart.difficulty === "expert" ? EXPERT_HIT_WINDOWS : DEFAULT_HIT_WINDOWS,
       chartLeadInMs: CHART_LEAD_IN_MS,
     });
     windowManagerRef.current = new NoteWindowManager(
       chart,
       2000,
-      DEFAULT_HIT_WINDOWS,
+      chart.difficulty === "expert" ? EXPERT_HIT_WINDOWS : DEFAULT_HIT_WINDOWS,
       CHART_LEAD_IN_MS
     );
     lanesHeldRef.current = [false, false, false, false];
@@ -175,7 +185,10 @@ export function useGameLoop(): void {
       startMs: chartStartPlaybackMs(chart),
       endMs: chartEndPlaybackMs(chart, CHART_LEAD_IN_MS),
     };
+    countdownResumedTrackRef.current = null;
     playModeRef.current.setMode(settings.autoplay ? "autoplay" : "manual");
+    usedAutoplayRef.current = settings.autoplay;
+    useGameStore.setState({ usedAutoplayThisRound: settings.autoplay });
     syncClockToStorePlayback(chart);
     clockSyncedTrackRef.current = chart.trackId;
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -250,16 +263,28 @@ export function useGameLoop(): void {
     const loop = () => {
       const state = useGameStore.getState();
       if (state.phase !== "autoplay" && state.phase !== "manual") return;
-      if (state.trackLifecycle === "countdown") {
-        useGameStore.setState({ trackLifecycle: "playing" });
-      }
 
       const liveChart = state.chart;
       if (!liveChart) return;
+
+      if (state.trackLifecycle === "countdown") {
+        const countdownDone =
+          state.countdownUntilMs === null || Date.now() >= state.countdownUntilMs;
+        if (!countdownDone) {
+          rafRef.current = requestAnimationFrame(loop);
+          return;
+        }
+        useGameStore.setState({ trackLifecycle: "playing", countdownUntilMs: null });
+        if (countdownResumedTrackRef.current !== liveChart.trackId) {
+          countdownResumedTrackRef.current = liveChart.trackId;
+          void resumeSpotifyPlayback();
+        }
+      }
+
       if (state.playback?.trackId !== liveChart.trackId) {
         windowManagerRef.current = null;
         engineRef.current = null;
-        useGameStore.setState({ trackLifecycle: "ending" });
+        useGameStore.setState({ trackLifecycle: "ending", lastScoreEvent: null });
         return;
       }
 
@@ -275,14 +300,19 @@ export function useGameLoop(): void {
       loopFramesForChartRef.current += 1;
 
       const { startMs, endMs } = chartBoundsRef.current;
+      const reportedDurationMs = state.playback?.track?.durationMs ?? 0;
+      const effectiveEndMs =
+        endMs > 0 && reportedDurationMs > 0
+          ? Math.min(endMs, reportedDurationMs)
+          : endMs;
       const sinceChartMount =
         performance.now() - chartMountPerfRef.current;
 
       if (
-        endMs > 0 &&
+        effectiveEndMs > 0 &&
         !mountStaleResyncDoneRef.current &&
         sinceChartMount < CHART_MOUNT_STALE_MS &&
-        pos > endMs + CHART_FINISH_PAD_MS
+        pos > effectiveEndMs + CHART_FINISH_PAD_MS
       ) {
         mountStaleResyncDoneRef.current = true;
         syncClockToStorePlayback(liveChart);
@@ -294,20 +324,20 @@ export function useGameLoop(): void {
       }
 
       if (
-        endMs > 0 &&
+        effectiveEndMs > 0 &&
         !sawPlayheadInChartTailRef.current &&
-        pos > endMs &&
+        pos > effectiveEndMs &&
         loopFramesForChartRef.current <= 90
       ) {
         syncClockToStorePlayback(liveChart);
         pos = playbackClock.estimateMs();
       }
 
-      if (endMs <= 0 || pos <= endMs) {
+      if (effectiveEndMs <= 0 || pos <= effectiveEndMs) {
         sawPlayheadInChartTailRef.current = true;
       }
 
-      const boundedPos = Math.min(Math.max(pos, startMs), endMs || pos);
+      const boundedPos = Math.min(Math.max(pos, startMs), effectiveEndMs || pos);
 
       const prev = lastPlaybackPosRef.current;
       lastPlaybackPosRef.current = boundedPos;
@@ -339,6 +369,10 @@ export function useGameLoop(): void {
       const noteCount = liveChart.notes.length;
 
       if (playModeRef.current.isAutoplay()) {
+        if (!usedAutoplayRef.current) {
+          usedAutoplayRef.current = true;
+          useGameStore.setState({ usedAutoplayThisRound: true });
+        }
         const windowManager = windowManagerRef.current;
         if (windowManager) {
           const hits = windowManager.getAutoplayHits(boundedPos);
@@ -373,7 +407,7 @@ export function useGameLoop(): void {
         if (lanesHeldRef.current.some(Boolean)) {
           consecutiveAfkMissRef.current = 0;
         } else if (
-          notesScrollingRegion(boundedPos, endMs, liveChart.notes.length)
+          notesScrollingRegion(boundedPos, effectiveEndMs, liveChart.notes.length)
         ) {
           for (const ev of missed) {
             if (ev.judgement !== "miss") continue;
@@ -394,7 +428,7 @@ export function useGameLoop(): void {
       }
 
       const pastChartFinish =
-        endMs > 0 && pos >= endMs;
+        effectiveEndMs > 0 && pos >= effectiveEndMs;
       const canFinishResults =
         sawPlayheadInChartTailRef.current ||
         (loopFramesForChartRef.current > FINISH_STALE_WAIT_FRAMES &&

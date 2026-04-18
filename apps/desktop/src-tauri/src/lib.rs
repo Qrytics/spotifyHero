@@ -53,8 +53,12 @@ pub fn run() {
             commands::spotify_login,
             commands::spotify_logout,
             commands::spotify_connection_status,
+            commands::spotify_pause_playback,
+            commands::spotify_resume_playback,
             commands::set_always_on_top,
             commands::save_window_geometry,
+            commands::load_app_settings,
+            commands::save_app_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running spotifyHero");

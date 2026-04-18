@@ -1,12 +1,15 @@
-import React from "react";
+import React, { useState } from "react";
 import { countChartTapsAndHolds } from "@spotifyhero/gameplay-core";
 import { useGameStore } from "../store/gameStore.js";
+import { LeaderboardPanel } from "./LeaderboardPanel.js";
 
 export function ResultsScreen(): React.ReactElement {
   const session = useGameStore((s) => s.session);
   const resetRound = useGameStore((s) => s.resetRound);
   const playback = useGameStore((s) => s.playback);
   const chart = useGameStore((s) => s.chart);
+  const usedAutoplayThisRound = useGameStore((s) => s.usedAutoplayThisRound);
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
 
   if (!session) return <></>;
 
@@ -76,6 +79,30 @@ export function ResultsScreen(): React.ReactElement {
       >
         Back
       </button>
+      <button
+        onClick={() => setLeaderboardOpen(true)}
+        style={{
+          marginTop: "2px",
+          background: "transparent",
+          color: "var(--accent)",
+          border: "1px solid #2c5",
+          borderRadius: "var(--radius)",
+          padding: "5px 12px",
+          fontSize: "10px",
+          fontWeight: 700,
+          cursor: "pointer",
+        }}
+      >
+        Leaderboard
+      </button>
+      <LeaderboardPanel
+        open={leaderboardOpen}
+        onClose={() => setLeaderboardOpen(false)}
+        trackId={session.trackId}
+        difficulty={session.difficulty}
+        session={session}
+        eligibleForRanking={!usedAutoplayThisRound}
+      />
     </div>
   );
 }

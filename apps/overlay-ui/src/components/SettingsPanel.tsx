@@ -45,6 +45,7 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
     updateSettings(draft);
     onClose();
   };
+  const speedFillPct = `${((draft.noteScrollSpeed - 0.45) / (5 - 0.45)) * 100}%`;
 
   const inputStyle: React.CSSProperties = {
     width: "100%",
@@ -194,7 +195,8 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <input
               type="range"
-              style={{ flex: 1, minWidth: 0 }}
+              className="speed-range"
+              style={{ flex: 1, minWidth: 0, ["--range-fill" as string]: speedFillPct }}
               min={0.45}
               max={5}
               step={0.05}

@@ -30,6 +30,35 @@ fn http_client() -> &'static Client {
     HTTP.get_or_init(Client::new)
 }
 
+async fn spotify_playback_command(
+    app: &tauri::AppHandle,
+    endpoint: &str,
+) -> Result<(), String> {
+    let Ok(client_id) = std::env::var("SPOTIFY_CLIENT_ID") else {
+        return Ok(());
+    };
+    let http = http_client();
+    let Some(access) = ensure_access_token(app, http, &client_id).await? else {
+        return Ok(());
+    };
+    let url = format!("https://api.spotify.com/v1/me/player/{endpoint}");
+    let res = http
+        .put(url)
+        .bearer_auth(access)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    match res.status().as_u16() {
+        200 | 202 | 204 => Ok(()),
+        401 => Ok(()),
+        403 | 404 => Ok(()),
+        s => {
+            let body = res.text().await.unwrap_or_default();
+            Err(format!("Spotify /me/player/{endpoint} failed ({s}): {body}"))
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Spotify
 // ---------------------------------------------------------------------------
@@ -71,6 +100,12 @@ pub struct SpotifyConnectionStatus {
     pub connected: bool,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettingsPayload {
+    pub note_scroll_speed: f64,
+}
+
 #[command]
 pub async fn spotify_connection_status(
     app: tauri::AppHandle,
@@ -107,6 +142,16 @@ pub async fn get_playback_state(app: tauri::AppHandle) -> Result<PlaybackStatePa
     }
 }
 
+#[command]
+pub async fn spotify_pause_playback(app: tauri::AppHandle) -> Result<(), String> {
+    spotify_playback_command(&app, "pause").await
+}
+
+#[command]
+pub async fn spotify_resume_playback(app: tauri::AppHandle) -> Result<(), String> {
+    spotify_playback_command(&app, "play").await
+}
+
 /// Toggle always-on-top for the overlay window.
 #[command]
 pub async fn set_always_on_top(
@@ -135,5 +180,30 @@ pub async fn save_window_geometry(
     store.set("window_y", serde_json::json!(y));
     store.set("window_width", serde_json::json!(width));
     store.set("window_height", serde_json::json!(height));
+    store.save().map_err(|e| e.to_string())
+}
+
+#[command]
+pub async fn load_app_settings(app: tauri::AppHandle) -> Result<AppSettingsPayload, String> {
+    let store = tauri_plugin_store::StoreBuilder::new(&app, "settings.json")
+        .build()
+        .map_err(|e| e.to_string())?;
+    let defaults = crate::settings::Settings::default();
+    let note_scroll_speed = store
+        .get("note_scroll_speed")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(defaults.note_scroll_speed);
+    Ok(AppSettingsPayload { note_scroll_speed })
+}
+
+#[command]
+pub async fn save_app_settings(
+    app: tauri::AppHandle,
+    payload: AppSettingsPayload,
+) -> Result<(), String> {
+    let store = tauri_plugin_store::StoreBuilder::new(&app, "settings.json")
+        .build()
+        .map_err(|e| e.to_string())?;
+    store.set("note_scroll_speed", serde_json::json!(payload.note_scroll_speed));
     store.save().map_err(|e| e.to_string())
 }

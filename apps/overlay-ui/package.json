@@ -13,16 +13,17 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.3.0",
     "@spotifyhero/audio-engine": "workspace:*",
     "@spotifyhero/chart-generator": "workspace:*",
     "@spotifyhero/gameplay-core": "workspace:*",
     "@spotifyhero/leaderboard-client": "workspace:*",
     "@spotifyhero/shared-types": "workspace:*",
+    "@supabase/supabase-js": "^2.103.3",
+    "@tauri-apps/api": "^2.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "zustand": "^4.5.2",
-    "zod": "^3.23.8"
+    "zod": "^3.23.8",
+    "zustand": "^4.5.2"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",

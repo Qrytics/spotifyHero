@@ -8,6 +8,7 @@ import type {
 } from "@spotifyhero/shared-types";
 import { AppSettingsSchema } from "@spotifyhero/shared-types";
 import type { PlayMode } from "@spotifyhero/gameplay-core";
+import { saveTauriAppSettings } from "../lib/tauriSettings.js";
 
 const SETTINGS_STORAGE_KEY = "spotifyHero_settings_v1";
 
@@ -60,6 +61,7 @@ export type TrackLifecycleState = (typeof TRACK_LIFECYCLE_STATES)[number];
 interface GameState {
   phase: GamePhase;
   trackLifecycle: TrackLifecycleState;
+  countdownUntilMs: number | null;
   playback: PlaybackState | null;
   chart: Chart | null;
   settings: AppSettings;
@@ -79,6 +81,7 @@ interface GameState {
   accuracy: number;
   lastScoreEvent: ScoreEvent | null;
   session: GameSession | null;
+  usedAutoplayThisRound: boolean;
 
   // Actions
   setPhase: (phase: GamePhase) => void;
@@ -98,6 +101,7 @@ interface GameState {
 export const useGameStore = create<GameState>((set, get) => ({
   phase: "idle",
   trackLifecycle: "idle",
+  countdownUntilMs: null,
   playback: null,
   chart: null,
   settings: settingsFromEnv(),
@@ -109,6 +113,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   accuracy: 1,
   lastScoreEvent: null,
   session: null,
+  usedAutoplayThisRound: false,
 
   setPhase: (phase) => {
     const trackLifecycle: TrackLifecycleState =
@@ -164,6 +169,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       set({
         phase: "loading",
         trackLifecycle: "loading",
+          countdownUntilMs: null,
         chart: null,
         score: 0,
         combo: 0,
@@ -171,6 +177,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         accuracy: 1,
         lastScoreEvent: null,
         session: null,
+        usedAutoplayThisRound: false,
         sessionPlayMode: inherit,
       });
       return;
@@ -212,6 +219,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         chart,
         phase,
         trackLifecycle: "countdown",
+        countdownUntilMs: Date.now() + 3200,
         sessionPlayMode: null,
         lastPlayPhase: nextLast,
       };
@@ -240,7 +248,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     }),
 
   setSession: (session) =>
-    set({ session, phase: "results", trackLifecycle: "ending" }),
+    set({ session, phase: "results", trackLifecycle: "ending", countdownUntilMs: null }),
 
   togglePlayMode: () => {
     const current = get().phase;
@@ -262,9 +270,11 @@ export const useGameStore = create<GameState>((set, get) => ({
       accuracy: 1,
       lastScoreEvent: null,
       session: null,
+      usedAutoplayThisRound: false,
       chart: null,
       phase: "idle",
       trackLifecycle: "idle",
+      countdownUntilMs: null,
       sessionPlayMode: null,
       lastPlayPhase: state.settings.autoplay ? "autoplay" : "manual",
     })),
@@ -280,6 +290,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       } catch {
         /* private mode / quota */
       }
+      void saveTauriAppSettings({
+        noteScrollSpeed: settings.noteScrollSpeed,
+      });
       return {
         settings,
         ...(patch.autoplay !== undefined
