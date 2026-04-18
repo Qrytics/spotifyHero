@@ -5,7 +5,6 @@ pub mod spotify;
 pub mod settings;
 
 use tauri::{
-    Manager,
     WebviewUrl,
     WebviewWindowBuilder,
 };
@@ -30,11 +29,13 @@ pub fn run() {
             .decorations(true)          // Keep OS chrome so user can drag/minimize
             .transparent(false)
             .visible_on_all_workspaces(true)
-            .build()?;
+            .build()
+            .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
 
             // Restore persisted window geometry if available
-            let store = tauri_plugin_store::StoreBuilder::new("settings.json")
-                .build(app.handle().clone());
+            let store = tauri_plugin_store::StoreBuilder::new(app, "settings.json")
+                .build()
+                .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
 
             if let Some(x) = store.get("window_x").and_then(|v| v.as_f64()) {
                 // Ignore errors – first launch has no saved position

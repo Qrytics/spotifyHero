@@ -57,8 +57,9 @@ pub async fn save_window_geometry(
     width: u32,
     height: u32,
 ) -> Result<(), String> {
-    let mut store = tauri_plugin_store::StoreBuilder::new("settings.json")
-        .build(app);
+    let store = tauri_plugin_store::StoreBuilder::new(&app, "settings.json")
+        .build()
+        .map_err(|e| e.to_string())?;
 
     store.set("window_x", serde_json::json!(x));
     store.set("window_y", serde_json::json!(y));

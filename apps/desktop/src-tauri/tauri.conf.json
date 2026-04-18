@@ -10,22 +10,6 @@
     "frontendDist": "../../../apps/overlay-ui/dist"
   },
   "app": {
-    "windows": [
-      {
-        "label": "overlay",
-        "title": "spotifyHero",
-        "width": 360,
-        "height": 640,
-        "minWidth": 200,
-        "minHeight": 400,
-        "resizable": true,
-        "fullscreen": false,
-        "alwaysOnTop": true,
-        "decorations": true,
-        "transparent": false,
-        "visible": true
-      }
-    ],
     "security": {
       "csp": null
     }
