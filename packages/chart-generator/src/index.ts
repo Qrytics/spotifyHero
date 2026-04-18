@@ -8,12 +8,33 @@ export interface ChartGeneratorOptions {
   difficulty: Difficulty;
   /** Minimum ms gap between consecutive notes on the same lane. */
   minGapMs?: number;
+  /** Song loudness normalization profile used to tune silence gating. */
+  normalizationProfile?: SongNormalizationProfile;
   /**
    * Confidence gate: if ML model confidence is below this value for a note,
    * the deterministic placement is used instead.
    */
   mlConfidenceThreshold?: number;
 }
+
+export type SongNormalizationProfile = "quiet" | "balanced" | "loud";
+
+export interface SilenceGateThresholds {
+  /** Enter silence when both amplitude and RMS stay below these thresholds. */
+  enterAmplitude: number;
+  enterRms: number;
+  /** Exit silence only after both amplitude and RMS cross these higher thresholds. */
+  exitAmplitude: number;
+  exitRms: number;
+  /** Require this much contiguous low-energy time before confirming silence. */
+  minSilenceMs: number;
+}
+
+const NORMALIZATION_SILENCE_MULTIPLIER: Record<SongNormalizationProfile, number> = {
+  quiet: 0.82,
+  balanced: 1,
+  loud: 1.18,
+};
 
 // How many lanes per difficulty
 const LANE_COUNTS: Record<Difficulty, number> = {
@@ -48,6 +69,8 @@ export const DIFFICULTY_PARAMS: Record<
     sustainConfidenceMin: number;
     /** Hard cap for consecutive sustain heads (prevents long sustain-only chains). */
     maxConsecutiveSustains: number;
+    /** Difficulty-tuned silence gate thresholds for onset eligibility. */
+    silenceGate: SilenceGateThresholds;
   }
 > = {
   easy: {
@@ -62,6 +85,13 @@ export const DIFFICULTY_PARAMS: Record<
     maxSustainPercent: 0.14,
     sustainConfidenceMin: 0.72,
     maxConsecutiveSustains: 1,
+    silenceGate: {
+      enterAmplitude: 0.045,
+      enterRms: 0.032,
+      exitAmplitude: 0.072,
+      exitRms: 0.052,
+      minSilenceMs: 300,
+    },
   },
   medium: {
     densityMultiplier: 0.52,
@@ -75,6 +105,13 @@ export const DIFFICULTY_PARAMS: Record<
     maxSustainPercent: 0.18,
     sustainConfidenceMin: 0.68,
     maxConsecutiveSustains: 2,
+    silenceGate: {
+      enterAmplitude: 0.04,
+      enterRms: 0.028,
+      exitAmplitude: 0.066,
+      exitRms: 0.048,
+      minSilenceMs: 250,
+    },
   },
   hard: {
     densityMultiplier: 0.78,
@@ -88,6 +125,13 @@ export const DIFFICULTY_PARAMS: Record<
     maxSustainPercent: 0.22,
     sustainConfidenceMin: 0.64,
     maxConsecutiveSustains: 2,
+    silenceGate: {
+      enterAmplitude: 0.036,
+      enterRms: 0.025,
+      exitAmplitude: 0.062,
+      exitRms: 0.045,
+      minSilenceMs: 220,
+    },
   },
   expert: {
     densityMultiplier: 1.0,
@@ -101,8 +145,117 @@ export const DIFFICULTY_PARAMS: Record<
     maxSustainPercent: 0.26,
     sustainConfidenceMin: 0.6,
     maxConsecutiveSustains: 3,
+    silenceGate: {
+      enterAmplitude: 0.032,
+      enterRms: 0.022,
+      exitAmplitude: 0.058,
+      exitRms: 0.042,
+      minSilenceMs: 180,
+    },
   },
 };
+
+export interface FeatureExtractionStats {
+  inputOnsets: number;
+  confidenceMin: number;
+  confidenceMax: number;
+  confidenceAvg: number;
+  gatedOnsets: number;
+  droppedBySilenceGate: number;
+  droppedByConfidenceGate: number;
+  confirmedSilenceWindows: Array<{ startMs: number; endMs: number }>;
+}
+
+function withNormalization(value: number, profile: SongNormalizationProfile): number {
+  return value * (NORMALIZATION_SILENCE_MULTIPLIER[profile] ?? 1);
+}
+
+function applySilenceGate(
+  onsets: readonly BeatEvent[],
+  gate: SilenceGateThresholds,
+  normalizationProfile: SongNormalizationProfile
+): { gated: BeatEvent[]; droppedBySilenceGate: number; confirmedSilenceWindows: Array<{ startMs: number; endMs: number }> } {
+  if (onsets.length === 0) {
+    return { gated: [], droppedBySilenceGate: 0, confirmedSilenceWindows: [] };
+  }
+  const enterAmplitude = withNormalization(gate.enterAmplitude, normalizationProfile);
+  const enterRms = withNormalization(gate.enterRms, normalizationProfile);
+  const exitAmplitude = withNormalization(gate.exitAmplitude, normalizationProfile);
+  const exitRms = withNormalization(gate.exitRms, normalizationProfile);
+  const sorted = [...onsets].sort((a, b) => a.timeMs - b.timeMs);
+  const gated: BeatEvent[] = [];
+  const silenceWindows: Array<{ startMs: number; endMs: number }> = [];
+  let pendingSilenceStart: number | null = null;
+  let confirmedSilenceStart: number | null = null;
+  for (const event of sorted) {
+    const amplitude = event.amplitude ?? 1;
+    const rms = event.rms ?? amplitude;
+    const belowEnter = amplitude <= enterAmplitude && rms <= enterRms;
+    const aboveExit = amplitude >= exitAmplitude && rms >= exitRms;
+    if (confirmedSilenceStart !== null) {
+      if (aboveExit) {
+        silenceWindows.push({ startMs: confirmedSilenceStart, endMs: event.timeMs });
+        confirmedSilenceStart = null;
+      } else {
+        continue;
+      }
+    }
+    if (pendingSilenceStart === null) {
+      if (belowEnter) pendingSilenceStart = event.timeMs;
+      gated.push(event);
+      continue;
+    }
+    if (belowEnter) {
+      if (event.timeMs - pendingSilenceStart >= gate.minSilenceMs) {
+        confirmedSilenceStart = pendingSilenceStart;
+      }
+    } else {
+      pendingSilenceStart = null;
+    }
+    if (confirmedSilenceStart === null) {
+      gated.push(event);
+    }
+  }
+  if (confirmedSilenceStart !== null) {
+    silenceWindows.push({
+      startMs: confirmedSilenceStart,
+      endMs: sorted[sorted.length - 1]!.timeMs,
+    });
+  }
+  return {
+    gated,
+    droppedBySilenceGate: Math.max(0, sorted.length - gated.length),
+    confirmedSilenceWindows: silenceWindows,
+  };
+}
+
+function summarizeFeatureExtraction(
+  inputOnsets: readonly BeatEvent[],
+  gatedOnsets: readonly BeatEvent[],
+  droppedBySilenceGate: number,
+  confidenceFloor: number,
+  confirmedSilenceWindows: Array<{ startMs: number; endMs: number }>
+): FeatureExtractionStats {
+  let confidenceMin = 1;
+  let confidenceMax = 0;
+  let confidenceSum = 0;
+  for (const event of inputOnsets) {
+    confidenceMin = Math.min(confidenceMin, event.confidence);
+    confidenceMax = Math.max(confidenceMax, event.confidence);
+    confidenceSum += event.confidence;
+  }
+  const droppedByConfidenceGate = gatedOnsets.filter((e) => e.confidence <= confidenceFloor).length;
+  return {
+    inputOnsets: inputOnsets.length,
+    confidenceMin: inputOnsets.length ? confidenceMin : 0,
+    confidenceMax: inputOnsets.length ? confidenceMax : 0,
+    confidenceAvg: inputOnsets.length ? confidenceSum / inputOnsets.length : 0,
+    gatedOnsets: gatedOnsets.length,
+    droppedBySilenceGate,
+    droppedByConfidenceGate,
+    confirmedSilenceWindows,
+  };
+}
 
 interface SustainAssignmentCandidate {
   timeMs: number;
@@ -471,10 +624,28 @@ export function generateDeterministicChart(
   const { difficulty } = options;
   const preset = DIFFICULTY_PARAMS[difficulty];
   const minGapMs = options.minGapMs ?? preset.minGapMs;
+  const normalizationProfile = options.normalizationProfile ?? "balanced";
   const laneCount = LANE_COUNTS[difficulty];
   const densityMultiplier = preset.densityMultiplier;
-
-  const onsets = beatEvents.filter((e) => e.isOnset && e.confidence > 0.3);
+  const confidenceFloor = 0.3;
+  const onsetCandidates = beatEvents.filter((e) => e.isOnset);
+  const silenceGateResult = applySilenceGate(
+    onsetCandidates,
+    preset.silenceGate,
+    normalizationProfile
+  );
+  const onsets = silenceGateResult.gated.filter((e) => e.confidence > confidenceFloor);
+  const extractionStats = summarizeFeatureExtraction(
+    onsetCandidates,
+    silenceGateResult.gated,
+    silenceGateResult.droppedBySilenceGate,
+    confidenceFloor,
+    silenceGateResult.confirmedSilenceWindows
+  );
+  console.debug(
+    `[chart-generator] ${trackId}/${difficulty} feature stats`,
+    extractionStats
+  );
 
   // Density filter: confidence-first when strengths differ; uniform-confidence inputs keep legacy even spread in time
   const targetCount = Math.ceil(onsets.length * densityMultiplier);
@@ -556,7 +727,7 @@ export function generateDeterministicChart(
     difficulty,
     notes: validatedNotes,
     bpm,
-    generatorVersion: "deterministic-1.5",
+    generatorVersion: "deterministic-1.6",
     generatedAt: new Date(),
   };
 }
