@@ -40,13 +40,14 @@ export const DIFFICULTY_PARAMS: Record<
     minHoldDurationMs: number;
     /** Do not merge chains longer than this (more tapping, shorter sustains). */
     holdMaxDurationMs: number;
-    /** 0-1 deterministic chance that an eligible chain becomes a hold. */
-    maxHoldFraction: number;
-    /**
-     * 0–99: deterministic chance per mergeable chain to stay as separate taps
-     * instead of one hold (more tap gameplay).
-     */
-    holdDemergePercent: number;
+    /** Minimum sustain ratio target as a fraction of total notes. */
+    minSustainPercent: number;
+    /** Maximum sustain ratio target as a fraction of total notes. */
+    maxSustainPercent: number;
+    /** Minimum onset confidence required to classify note as sustain head. */
+    sustainConfidenceMin: number;
+    /** Hard cap for consecutive sustain heads (prevents long sustain-only chains). */
+    maxConsecutiveSustains: number;
   }
 > = {
   easy: {
@@ -57,8 +58,10 @@ export const DIFFICULTY_PARAMS: Record<
     holdGapBeatFraction: 0.7,
     minHoldDurationMs: 500,
     holdMaxDurationMs: 760,
-    maxHoldFraction: 0.18,
-    holdDemergePercent: 72,
+    minSustainPercent: 0.06,
+    maxSustainPercent: 0.14,
+    sustainConfidenceMin: 0.72,
+    maxConsecutiveSustains: 1,
   },
   medium: {
     densityMultiplier: 0.52,
@@ -68,8 +71,10 @@ export const DIFFICULTY_PARAMS: Record<
     holdGapBeatFraction: 0.72,
     minHoldDurationMs: 460,
     holdMaxDurationMs: 720,
-    maxHoldFraction: 0.3,
-    holdDemergePercent: 68,
+    minSustainPercent: 0.08,
+    maxSustainPercent: 0.18,
+    sustainConfidenceMin: 0.68,
+    maxConsecutiveSustains: 2,
   },
   hard: {
     densityMultiplier: 0.78,
@@ -79,8 +84,10 @@ export const DIFFICULTY_PARAMS: Record<
     holdGapBeatFraction: 0.78,
     minHoldDurationMs: 430,
     holdMaxDurationMs: 640,
-    maxHoldFraction: 0.42,
-    holdDemergePercent: 64,
+    minSustainPercent: 0.1,
+    maxSustainPercent: 0.22,
+    sustainConfidenceMin: 0.64,
+    maxConsecutiveSustains: 2,
   },
   expert: {
     densityMultiplier: 1.0,
@@ -90,10 +97,230 @@ export const DIFFICULTY_PARAMS: Record<
     holdGapBeatFraction: 0.85,
     minHoldDurationMs: 380,
     holdMaxDurationMs: 620,
-    maxHoldFraction: 0.55,
-    holdDemergePercent: 60,
+    minSustainPercent: 0.12,
+    maxSustainPercent: 0.26,
+    sustainConfidenceMin: 0.6,
+    maxConsecutiveSustains: 3,
   },
 };
+
+interface SustainAssignmentCandidate {
+  timeMs: number;
+  lane: number;
+  confidence: number;
+}
+
+function countTapSustain(notes: readonly Note[]): {
+  taps: number;
+  sustains: number;
+  sustainPercent: number;
+} {
+  let taps = 0;
+  let sustains = 0;
+  for (const note of notes) {
+    if (note.durationMs > 0) sustains += 1;
+    else taps += 1;
+  }
+  const total = taps + sustains;
+  return {
+    taps,
+    sustains,
+    sustainPercent: total > 0 ? sustains / total : 0,
+  };
+}
+
+function logChartStats(trackId: string, difficulty: Difficulty, notes: readonly Note[]): void {
+  const stats = countTapSustain(notes);
+  const sustainPct = (stats.sustainPercent * 100).toFixed(1);
+  console.info(
+    `[chart-generator] ${trackId}/${difficulty}: taps=${stats.taps}, sustains=${stats.sustains}, sustain%=${sustainPct}`
+  );
+}
+
+function sustainGapMaxForBpm(
+  bpm: number,
+  holdGapMinMs: number,
+  holdGapMaxMs: number,
+  holdGapBeatFraction: number,
+  minHoldDurationMs: number
+): number {
+  const beatScaled = Math.min(
+    holdGapMaxMs,
+    Math.round((60_000 / Math.max(1, bpm)) * holdGapBeatFraction)
+  );
+  return Math.max(holdGapMinMs, minHoldDurationMs, beatScaled);
+}
+
+function canAssignSustainAtIndex(
+  notes: readonly Note[],
+  index: number,
+  sustainGapMinMs: number,
+  sustainGapMaxMs: number,
+  minHoldDurationMs: number,
+  holdMaxDurationMs: number,
+  sustainConfidenceMin: number
+): { durationMs: number; confidence: number } | null {
+  const head = notes[index];
+  const next = notes[index + 1];
+  if (!head || !next) return null;
+  const gap = next.timeMs - head.timeMs;
+  if (gap < sustainGapMinMs || gap > sustainGapMaxMs) return null;
+  const confidence = Math.min(head.confidence, next.confidence);
+  if (confidence < sustainConfidenceMin) return null;
+  const durationMs = Math.min(gap, holdMaxDurationMs);
+  if (durationMs < minHoldDurationMs) return null;
+  return { durationMs, confidence };
+}
+
+function assignSustainsWithConstraints(
+  candidates: readonly SustainAssignmentCandidate[],
+  preset: (typeof DIFFICULTY_PARAMS)[Difficulty],
+  bpm: number
+): Note[] {
+  const sustainGapMaxMs = sustainGapMaxForBpm(
+    bpm,
+    preset.holdGapMinMs,
+    preset.holdGapMaxMs,
+    preset.holdGapBeatFraction,
+    preset.minHoldDurationMs
+  );
+  const notes: Note[] = candidates.map((n) => ({
+    timeMs: n.timeMs,
+    lane: n.lane,
+    durationMs: 0,
+  }));
+
+  let consecutiveSustains = 0;
+  for (let i = 0; i < candidates.length; i++) {
+    const sustain = canAssignSustainAtIndex(
+      candidates,
+      i,
+      preset.holdGapMinMs,
+      sustainGapMaxMs,
+      preset.minHoldDurationMs,
+      preset.holdMaxDurationMs,
+      preset.sustainConfidenceMin
+    );
+    if (
+      !sustain ||
+      consecutiveSustains >= preset.maxConsecutiveSustains
+    ) {
+      consecutiveSustains = 0;
+      continue;
+    }
+    notes[i]!.durationMs = sustain.durationMs;
+    consecutiveSustains += 1;
+  }
+
+  return notes;
+}
+
+function validateSustainRatios(
+  notes: Note[],
+  candidates: readonly SustainAssignmentCandidate[],
+  preset: (typeof DIFFICULTY_PARAMS)[Difficulty],
+  bpm: number
+): Note[] {
+  const sustainGapMaxMs = sustainGapMaxForBpm(
+    bpm,
+    preset.holdGapMinMs,
+    preset.holdGapMaxMs,
+    preset.holdGapBeatFraction,
+    preset.minHoldDurationMs
+  );
+  const updated = notes.map((n) => ({ ...n }));
+  const total = updated.length;
+  if (total === 0) return updated;
+  let minSustains = Math.ceil(total * preset.minSustainPercent);
+  const maxSustains = Math.floor(total * preset.maxSustainPercent);
+  const eligibleIndices = updated
+    .map((_, idx) => idx)
+    .filter((idx) =>
+      Boolean(
+        canAssignSustainAtIndex(
+          candidates,
+          idx,
+          preset.holdGapMinMs,
+          sustainGapMaxMs,
+          preset.minHoldDurationMs,
+          preset.holdMaxDurationMs,
+          preset.sustainConfidenceMin
+        )
+      )
+    );
+  minSustains = Math.min(minSustains, eligibleIndices.length);
+
+  const sustainIndices = updated
+    .map((n, idx) => ({ n, idx }))
+    .filter((x) => x.n.durationMs > 0)
+    .map((x) => x.idx);
+
+  if (sustainIndices.length > maxSustains) {
+    const ranked = sustainIndices
+      .map((idx) => {
+        const sustain = canAssignSustainAtIndex(
+          candidates,
+          idx,
+          preset.holdGapMinMs,
+          sustainGapMaxMs,
+          preset.minHoldDurationMs,
+          preset.holdMaxDurationMs,
+          preset.sustainConfidenceMin
+        );
+        return {
+          idx,
+          confidence: sustain?.confidence ?? 0,
+          durationMs: updated[idx]!.durationMs,
+        };
+      })
+      .sort(
+        (a, b) =>
+          a.confidence - b.confidence || a.durationMs - b.durationMs || b.idx - a.idx
+      );
+    let toDemote = sustainIndices.length - maxSustains;
+    for (const item of ranked) {
+      if (toDemote <= 0) break;
+      updated[item.idx]!.durationMs = 0;
+      toDemote -= 1;
+    }
+  }
+
+  let sustainCount = updated.reduce(
+    (sum, n) => sum + (n.durationMs > 0 ? 1 : 0),
+    0
+  );
+
+  if (sustainCount < minSustains) {
+    const promoteCandidates = updated
+      .map((n, idx) => ({ n, idx }))
+      .filter((x) => x.n.durationMs === 0)
+      .map(({ idx }) => {
+        const sustain = canAssignSustainAtIndex(
+          candidates,
+          idx,
+          preset.holdGapMinMs,
+          sustainGapMaxMs,
+          preset.minHoldDurationMs,
+          preset.holdMaxDurationMs,
+          preset.sustainConfidenceMin
+        );
+        return { idx, sustain };
+      })
+      .filter((x): x is { idx: number; sustain: { durationMs: number; confidence: number } } => Boolean(x.sustain))
+      .sort(
+        (a, b) =>
+          b.sustain.confidence - a.sustain.confidence ||
+          b.sustain.durationMs - a.sustain.durationMs
+      );
+    for (const candidate of promoteCandidates) {
+      if (sustainCount >= minSustains) break;
+      updated[candidate.idx]!.durationMs = candidate.sustain.durationMs;
+      sustainCount += 1;
+    }
+  }
+
+  return updated;
+}
 
 /**
  * Merge consecutive taps **per lane** (sorted by time) into sustained notes.
@@ -286,7 +513,7 @@ export function generateDeterministicChart(
   }
 
   const laneLastMs: number[] = new Array(laneCount).fill(-Infinity);
-  const notes: Note[] = [];
+  const candidates: SustainAssignmentCandidate[] = [];
   let placementSalt = 0;
 
   for (const event of filtered) {
@@ -307,30 +534,29 @@ export function generateDeterministicChart(
       validLanes
     );
     placementSalt += 1;
-    notes.push({ timeMs: event.timeMs, lane, durationMs: 0 });
+    candidates.push({ timeMs: event.timeMs, lane, confidence: event.confidence });
     laneLastMs[lane] = event.timeMs;
   }
 
-  const withHolds = mergeAdjacentHoldNotes(
-    notes,
-    preset.holdGapMinMs,
-    Math.min(
-      preset.holdGapMaxMs,
-      Math.round((60_000 / Math.max(1, bpm)) * preset.holdGapBeatFraction)
-    ),
-    preset.minHoldDurationMs,
-    preset.holdMaxDurationMs,
-    preset.holdDemergePercent,
-    trackId,
-    preset.maxHoldFraction
+  const initialNotes = assignSustainsWithConstraints(
+    candidates,
+    preset,
+    bpm
   );
+  const validatedNotes = validateSustainRatios(
+    initialNotes,
+    candidates,
+    preset,
+    bpm
+  );
+  logChartStats(trackId, difficulty, validatedNotes);
 
   return {
     trackId,
     difficulty,
-    notes: withHolds,
+    notes: validatedNotes,
     bpm,
-    generatorVersion: "deterministic-1.4",
+    generatorVersion: "deterministic-1.5",
     generatedAt: new Date(),
   };
 }
