@@ -11,7 +11,7 @@
  * Call `sync()` when new playback arrives from the poller — never from rAF.
  */
 /** Below this, Spotify poll is treated as jitter — keep extrapolating. */
-const IGNORE_DRIFT_MS = 125;
+const IGNORE_DRIFT_MS = 135;
 
 class PlaybackClockImpl {
   private anchorPerf = 0;

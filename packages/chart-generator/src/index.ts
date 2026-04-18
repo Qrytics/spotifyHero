@@ -34,6 +34,8 @@ export const DIFFICULTY_PARAMS: Record<
     minGapMs: number;
     holdGapMinMs: number;
     holdGapMaxMs: number;
+    /** Holds shorter than this are emitted as taps (micro-holds are awkward). */
+    minHoldDurationMs: number;
   }
 > = {
   easy: {
@@ -41,35 +43,41 @@ export const DIFFICULTY_PARAMS: Record<
     minGapMs: 148,
     holdGapMinMs: 320,
     holdGapMaxMs: 2400,
+    minHoldDurationMs: 400,
   },
   medium: {
     densityMultiplier: 0.52,
     minGapMs: 105,
     holdGapMinMs: 260,
     holdGapMaxMs: 1900,
+    minHoldDurationMs: 320,
   },
   hard: {
     densityMultiplier: 0.78,
     minGapMs: 88,
     holdGapMinMs: 220,
     holdGapMaxMs: 1750,
+    minHoldDurationMs: 280,
   },
   expert: {
     densityMultiplier: 1.0,
     minGapMs: 72,
     holdGapMinMs: 200,
     holdGapMaxMs: 1550,
+    minHoldDurationMs: 240,
   },
 };
 
 /**
  * Merge consecutive taps **per lane** (sorted by time) into sustained notes.
- * Global-time adjacency almost never shares a lane because lanes rotate — this pass is required.
+ * Greedy chains: 3+ same-lane taps in range merge to one hold (head → tail).
+ * If total duration &lt; `minHoldDurationMs`, the chain is emitted as separate taps.
  */
 export function mergeAdjacentHoldNotes(
   notes: Note[],
   holdGapMinMs = 220,
-  holdGapMaxMs = 1600
+  holdGapMaxMs = 1600,
+  minHoldDurationMs = 280
 ): Note[] {
   const maxLane = notes.reduce((m, n) => Math.max(m, n.lane), 0);
   const buckets: Note[][] = Array.from({ length: maxLane + 1 }, () => []);
@@ -86,27 +94,71 @@ export function mergeAdjacentHoldNotes(
     const laneNotes = buckets[lane]!.sort((a, b) => a.timeMs - b.timeMs);
     let i = 0;
     while (i < laneNotes.length) {
-      const a = laneNotes[i]!;
-      const b = laneNotes[i + 1];
-      if (
-        b &&
-        a.durationMs === 0 &&
-        b.durationMs === 0
-      ) {
-        const gap = b.timeMs - a.timeMs;
-        if (gap >= holdGapMinMs && gap <= holdGapMaxMs) {
-          merged.push({ timeMs: a.timeMs, lane, durationMs: gap });
-          i += 2;
-          continue;
-        }
+      const first = laneNotes[i]!;
+      if (first.durationMs !== 0) {
+        merged.push(first);
+        i += 1;
+        continue;
       }
-      merged.push(a);
-      i += 1;
+
+      let j = i;
+      while (j + 1 < laneNotes.length) {
+        const a = laneNotes[j]!;
+        const b = laneNotes[j + 1]!;
+        if (a.durationMs !== 0 || b.durationMs !== 0) break;
+        const gap = b.timeMs - a.timeMs;
+        if (gap < holdGapMinMs || gap > holdGapMaxMs) break;
+        j += 1;
+      }
+
+      if (j > i) {
+        const head = laneNotes[i]!;
+        const tail = laneNotes[j]!;
+        const dur = tail.timeMs - head.timeMs;
+        if (dur >= minHoldDurationMs) {
+          merged.push({ timeMs: head.timeMs, lane, durationMs: dur });
+        } else {
+          for (let k = i; k <= j; k++) {
+            const n = laneNotes[k]!;
+            merged.push({ timeMs: n.timeMs, lane, durationMs: 0 });
+          }
+        }
+        i = j + 1;
+      } else {
+        merged.push({ timeMs: first.timeMs, lane, durationMs: 0 });
+        i += 1;
+      }
     }
   }
 
   merged.sort((a, b) => a.timeMs - b.timeMs);
   return merged;
+}
+
+function mix32(n: number): number {
+  let x = n | 0;
+  x = Math.imul(x ^ (x >>> 16), 0x7feb352d);
+  x = Math.imul(x ^ (x >>> 15), 0x846ca68b);
+  return x ^ (x >>> 16);
+}
+
+/** Deterministic lane choice — same inputs always yield same lane (per-song charts). */
+function pickLaneDeterministic(
+  trackId: string,
+  timeMs: number,
+  salt: number,
+  valid: number[]
+): number {
+  if (valid.length === 0) return 0;
+  if (valid.length === 1) return valid[0]!;
+  let h = 2166136261;
+  for (let i = 0; i < trackId.length; i++) {
+    h = Math.imul(h ^ trackId.charCodeAt(i), 16777619);
+  }
+  h = Math.imul(h ^ timeMs, 1000003);
+  h = Math.imul(h ^ salt, 2246822519);
+  const idx = Math.abs(mix32(h)) % valid.length;
+  return valid[idx]!;
 }
 
 // ---------------------------------------------------------------------------
@@ -117,11 +169,12 @@ export function mergeAdjacentHoldNotes(
  * Generates a rhythm chart from raw beat/onset events.
  *
  * Algorithm:
- *   1. Collect all onsets from the beat stream.
- *   2. Apply density filter based on difficulty.
- *   3. Assign each surviving onset to a lane using a round-robin +
- *      variation strategy to avoid monotone patterns.
- *   4. Enforce minimum gap per lane to prevent simultaneous overlap.
+ *   1. Collect onsets from the beat stream.
+ *   2. Apply density filter: highest-confidence onsets first, then cap count;
+ *      re-sort by time (uniform confidence → same as proportional sampling).
+ *   3. Among lanes that satisfy min-gap, pick a lane using a stable hash of
+ *      track id + time + index (varied patterns per song, not a 0→1→2→3 loop).
+ *   4. Merge holds per lane.
  */
 export function generateDeterministicChart(
   trackId: string,
@@ -135,56 +188,75 @@ export function generateDeterministicChart(
   const laneCount = LANE_COUNTS[difficulty];
   const densityMultiplier = preset.densityMultiplier;
 
-  // Collect onsets sorted by time
-  const onsets = beatEvents
-    .filter((e) => e.isOnset && e.confidence > 0.3)
-    .sort((a, b) => a.timeMs - b.timeMs);
+  const onsets = beatEvents.filter((e) => e.isOnset && e.confidence > 0.3);
 
-  // Density filter: keep a fraction of onsets
+  // Density filter: confidence-first when strengths differ; uniform-confidence inputs keep legacy even spread in time
   const targetCount = Math.ceil(onsets.length * densityMultiplier);
-  const step = onsets.length / Math.max(targetCount, 1);
-  const filtered: BeatEvent[] = [];
-  let cursor = 0;
-  while (filtered.length < targetCount && Math.floor(cursor) < onsets.length) {
-    const idx = Math.floor(cursor);
-    const event = onsets[idx];
-    if (event) filtered.push(event);
-    cursor += step;
+  let minConf = Infinity;
+  let maxConf = -Infinity;
+  for (const e of onsets) {
+    if (e.confidence < minConf) minConf = e.confidence;
+    if (e.confidence > maxConf) maxConf = e.confidence;
+  }
+  const uniformConfidence =
+    onsets.length === 0 || minConf === maxConf;
+
+  let filtered: BeatEvent[];
+  if (uniformConfidence) {
+    const sortedByTime = [...onsets].sort((a, b) => a.timeMs - b.timeMs);
+    const step = sortedByTime.length / Math.max(targetCount, 1);
+    filtered = [];
+    let cursor = 0;
+    while (
+      filtered.length < targetCount &&
+      Math.floor(cursor) < sortedByTime.length
+    ) {
+      const idx = Math.floor(cursor);
+      const event = sortedByTime[idx];
+      if (event) filtered.push(event);
+      cursor += step;
+    }
+  } else {
+    const sortedByConfidence = [...onsets].sort((a, b) => {
+      const d = b.confidence - a.confidence;
+      return d !== 0 ? d : a.timeMs - b.timeMs;
+    });
+    filtered = sortedByConfidence
+      .slice(0, Math.max(0, targetCount))
+      .sort((a, b) => a.timeMs - b.timeMs);
   }
 
-  // Assign lanes
   const laneLastMs: number[] = new Array(laneCount).fill(-Infinity);
   const notes: Note[] = [];
-  let laneIdx = 0;
-
-  const difficultyStride =
-    difficulty === "easy"
-      ? 3
-      : difficulty === "medium"
-        ? 2
-        : difficulty === "hard"
-          ? 1
-          : 1;
+  let placementSalt = 0;
 
   for (const event of filtered) {
-    let triesLeft = laneCount;
-    while (triesLeft-- > 0) {
-      const lane = laneIdx % laneCount;
+    const validLanes: number[] = [];
+    for (let lane = 0; lane < laneCount; lane++) {
       const last = laneLastMs[lane] ?? -Infinity;
       if (event.timeMs - last >= minGapMs) {
-        notes.push({ timeMs: event.timeMs, lane, durationMs: 0 });
-        laneLastMs[lane] = event.timeMs;
-        break;
+        validLanes.push(lane);
       }
-      laneIdx += 1;
     }
-    laneIdx = (laneIdx + difficultyStride) % laneCount;
+    if (validLanes.length === 0) {
+      continue;
+    }
+    const lane = pickLaneDeterministic(
+      trackId,
+      event.timeMs,
+      placementSalt,
+      validLanes
+    );
+    placementSalt += 1;
+    notes.push({ timeMs: event.timeMs, lane, durationMs: 0 });
+    laneLastMs[lane] = event.timeMs;
   }
 
   const withHolds = mergeAdjacentHoldNotes(
     notes,
     preset.holdGapMinMs,
-    preset.holdGapMaxMs
+    preset.holdGapMaxMs,
+    preset.minHoldDurationMs
   );
 
   return {
@@ -192,7 +264,7 @@ export function generateDeterministicChart(
     difficulty,
     notes: withHolds,
     bpm,
-    generatorVersion: "deterministic-1.1",
+    generatorVersion: "deterministic-1.3",
     generatedAt: new Date(),
   };
 }

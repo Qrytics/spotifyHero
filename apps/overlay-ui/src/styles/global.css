@@ -31,3 +31,74 @@ html, body, #root {
   overflow: hidden;
   user-select: none;
 }
+
+/* Narrow overlay scrollbars (Settings modal, etc.) */
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 120, 140, 0.55) transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 140, 0.45);
+  border-radius: 4px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(140, 140, 160, 0.65);
+}
+
+/* Custom window chrome (Tauri undecorated) — smaller than OS caption buttons */
+.window-chrome-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: rgba(220, 220, 230, 0.72);
+  cursor: pointer;
+}
+
+.window-chrome-btn:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--text);
+}
+
+.window-chrome-btn-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.play-bottom-settings-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  margin: 0;
+  border: 1px solid rgba(74, 74, 92, 0.65);
+  border-radius: 3px;
+  background: rgba(20, 20, 28, 0.95);
+  color: rgba(200, 200, 210, 0.85);
+  font-size: 8px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.play-bottom-settings-btn:hover {
+  border-color: rgba(120, 120, 140, 0.75);
+  color: var(--text);
+}

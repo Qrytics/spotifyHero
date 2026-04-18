@@ -10,9 +10,29 @@ import { playbackClock } from "../lib/playbackClock.js";
 const LANE_HEX = ["#e040fb", "#1db954", "#ff9800", "#2196f3"];
 const LANE_COUNT = 4;
 const NOTE_RADIUS = 15;
-const HIT_LINE_Y_FRACTION = 0.82;
+/** Bottom of static target rings (largest arc in paintStatic). */
+const HIT_TARGET_OUTER_R = NOTE_RADIUS + 5;
+/** Pixels between canvas bottom and bottom of target rings — “almost touching”. */
+const HIT_LINE_BOTTOM_PAD = 4;
 const LOOK_BACK_MS = 400;
+/** Time span from hit line to top edge (y=0); scroll speed is hitLineY / LOOK_AHEAD_MS px/ms. */
 const LOOK_AHEAD_MS = 2200;
+
+/** Vertical center of hit line / receptors — bottom of outer target ring sits `HIT_LINE_BOTTOM_PAD` px above canvas bottom. */
+function hitLineYFromHeight(height: number): number {
+  return height - HIT_TARGET_OUTER_R - HIT_LINE_BOTTOM_PAD;
+}
+/**
+ * Include notes farther in the future so they render above the canvas top and scroll into view.
+ * Without this, the first frame for a note has cy === 0 (pop at top edge).
+ */
+const SCROLL_IN_ABOVE_MS = 380;
+/**
+ * Extra lookahead so a forward jump in playhead (drift re-anchor after ~135ms threshold, seek,
+ * or a long rAF gap) does not move an off-screen note into visible space in one step.
+ */
+const SCROLL_IN_STUTTER_MS = 400;
+const SCROLL_IN_EXTRA_MS = SCROLL_IN_ABOVE_MS + SCROLL_IN_STUTTER_MS;
 
 const PLAYABLE_PHASES = new Set(["autoplay", "manual", "paused"]);
 
@@ -274,7 +294,7 @@ export function NoteHighway(): React.ReactElement {
 
 function paintStatic(ctx: CanvasRenderingContext2D, width: number, height: number): void {
   const laneWidth = width / LANE_COUNT;
-  const hitLineY = height * HIT_LINE_Y_FRACTION;
+  const hitLineY = hitLineYFromHeight(height);
 
   const grad = ctx.createLinearGradient(0, 0, 0, height);
   grad.addColorStop(0, "#0e0e18");
@@ -340,11 +360,11 @@ function paintNotes(
   if (n === 0) return;
 
   const laneWidth = width / LANE_COUNT;
-  const hitLineY = height * HIT_LINE_Y_FRACTION;
+  const hitLineY = hitLineYFromHeight(height);
   const pxPerMs = hitLineY / LOOK_AHEAD_MS;
 
   const tLow = positionMs - LOOK_BACK_MS;
-  const tHigh = positionMs + LOOK_AHEAD_MS;
+  const tHigh = positionMs + LOOK_AHEAD_MS + SCROLL_IN_EXTRA_MS;
   let i = lowerBoundTime(notes, tLow);
   while (i > 0) {
     const prev = notes[i - 1]!;
@@ -446,7 +466,7 @@ function paintMissSlidingNotes(
   if (missSlide.size === 0) return;
 
   const laneWidth = width / LANE_COUNT;
-  const hitLineY = height * HIT_LINE_Y_FRACTION;
+  const hitLineY = hitLineYFromHeight(height);
   const pxPerMs = hitLineY / LOOK_AHEAD_MS;
   const toRemove: number[] = [];
 
@@ -525,7 +545,7 @@ function paintHitEffects(
   now: number
 ): void {
   const laneWidth = width / LANE_COUNT;
-  const hitLineY = height * HIT_LINE_Y_FRACTION;
+  const hitLineY = hitLineYFromHeight(height);
 
   for (let i = effects.length - 1; i >= 0; i--) {
     if (now - effects[i]!.t0 > HIT_FX_MS) effects.splice(i, 1);

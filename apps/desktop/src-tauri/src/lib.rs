@@ -19,17 +19,18 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
-            // Build the overlay window: small, always-on-top, no decorations on macOS/Linux
+            // Undecorated: compact custom title bar in overlay-ui (`WindowChrome`); native caption buttons cannot be scaled.
             let win = WebviewWindowBuilder::new(
                 app,
                 "overlay",
                 WebviewUrl::App("index.html".into()),
             )
             .title("spotifyHero")
-            .inner_size(360.0, 640.0)
-            .min_inner_size(200.0, 400.0)
+            // Default (first launch): ~3/4 of prior 380×840 — narrower and shorter.
+            .inner_size(180.0, 420.0)
+            .min_inner_size(180.0, 280.0)
             .always_on_top(true)
-            .decorations(true)          // Keep OS chrome so user can drag/minimize
+            .decorations(false)
             .transparent(false)
             .visible_on_all_workspaces(true)
             .build()

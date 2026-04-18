@@ -3,21 +3,54 @@ import { HybridChartGenerator } from "@spotifyhero/chart-generator";
 import type { BeatEvent, SpotifyTrack } from "@spotifyhero/shared-types";
 import { useGameStore } from "../store/gameStore.js";
 
+function hashTrackId(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h = Math.imul(h ^ id.charCodeAt(i), 16777619);
+  }
+  return h >>> 0;
+}
+
 /**
- * Builds a simple beat/onset grid for browser demo when no Spotify beat analysis exists.
+ * Builds a beat/onset grid when no Spotify beat analysis exists.
+ * Quarter / eighth / sixteenth subdivisions with descending confidence so the
+ * generator’s confidence-first density filter can separate Easy (strong beats) from Expert (full grid).
+ * Coincident times keep the highest-confidence event.
  */
 function demoBeatEvents(track: SpotifyTrack): { events: BeatEvent[]; bpm: number } {
   const bpm = track.bpm ?? 120;
   const beatMs = 60_000 / bpm;
-  const events: BeatEvent[] = [];
-  for (let t = 0; t < track.durationMs; t += beatMs) {
-    events.push({
-      timeMs: Math.round(t),
-      confidence: 0.9,
-      isBeat: true,
-      isOnset: true,
-    });
+  const phase = hashTrackId(track.id) % Math.max(1, Math.floor(beatMs));
+  const eighth = beatMs / 2;
+  const sixteenth = beatMs / 4;
+
+  const byTime = new Map<number, BeatEvent>();
+
+  const add = (timeMs: number, confidence: number): void => {
+    const k = Math.round(timeMs);
+    if (k < 0 || k >= track.durationMs) return;
+    const prev = byTime.get(k);
+    if (!prev || confidence > prev.confidence) {
+      byTime.set(k, {
+        timeMs: k,
+        confidence,
+        isBeat: true,
+        isOnset: true,
+      });
+    }
+  };
+
+  for (let t = phase; t < track.durationMs; t += beatMs) {
+    add(t, 0.9);
   }
+  for (let t = phase; t < track.durationMs; t += eighth) {
+    add(t, 0.72);
+  }
+  for (let t = phase; t < track.durationMs; t += sixteenth) {
+    add(t, 0.42);
+  }
+
+  const events = [...byTime.values()].sort((a, b) => a.timeMs - b.timeMs);
   return { events, bpm };
 }
 

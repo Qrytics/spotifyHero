@@ -6,7 +6,7 @@ Hybrid note chart generation: deterministic beat/onset extraction + optional ML 
 Converts raw beat events from the audio engine into a playable `Chart` for a given difficulty.
 
 ## Algorithm
-1. **Deterministic** – filters onsets by difficulty density, assigns lanes round-robin.
+1. **Deterministic** – density filter (confidence-first when strengths differ; uniform confidence keeps even time stepping). Stable-hash lane placement. Tap notes merged into holds per lane (greedy chains + `minHoldDurationMs`).
 2. **ML refinement** – calls `MLChartRefiner` (ONNX via Rust IPC). Falls back to deterministic if confidence < threshold.
 
 ## Key exports

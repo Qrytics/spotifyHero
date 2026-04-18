@@ -2,11 +2,14 @@ import React from "react";
 import { useGameStore } from "../store/gameStore.js";
 import { formatKeybindLabel } from "../lib/keybindDisplay.js";
 
+type PlayBottomBarProps = {
+  onOpenSettings: () => void;
+};
+
 /**
- * Bottom status strip: mode · toggle key · last judgement · lane keys.
- * Compact typography so narrow overlay windows (Tauri) do not clip content.
+ * Bottom status strip — single horizontal row (no wrap) so narrow overlay windows stay readable.
  */
-export function PlayBottomBar(): React.ReactElement {
+export function PlayBottomBar({ onOpenSettings }: PlayBottomBarProps): React.ReactElement {
   const phase = useGameStore((s) => s.phase);
   const lastEvent = useGameStore((s) => s.lastScoreEvent);
   const settings = useGameStore((s) => s.settings);
@@ -32,12 +35,11 @@ export function PlayBottomBar(): React.ReactElement {
 
   const judgementStyle = (j: string): React.CSSProperties => {
     const base: React.CSSProperties = {
-      fontSize: "9px",
+      fontSize: "8px",
       fontWeight: 700,
       textTransform: "uppercase",
-      letterSpacing: "0.03em",
+      letterSpacing: "0.02em",
       whiteSpace: "nowrap",
-      flexShrink: 0,
     };
     switch (j) {
       case "perfect":
@@ -57,99 +59,109 @@ export function PlayBottomBar(): React.ReactElement {
 
   return (
     <div
+      className="play-bottom-bar"
       style={{
         flexShrink: 0,
         display: "flex",
-        flexWrap: "wrap",
+        flexDirection: "row",
+        flexWrap: "nowrap",
         alignItems: "center",
-        columnGap: "10px",
-        rowGap: "4px",
-        padding: "5px 8px",
+        gap: "6px",
+        padding: "4px 6px",
         background: "#06060c",
         borderTop: "1px solid rgba(74,74,92,0.85)",
         boxSizing: "border-box",
         width: "100%",
         maxWidth: "100%",
+        overflow: "hidden",
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          flexWrap: "wrap",
-          gap: "8px",
-          minWidth: 0,
-          flex: "1 1 auto",
-        }}
-      >
-        {modeLabel ? (
-          <span
-            style={{
-              fontSize: "9px",
-              fontWeight: 700,
-              color: modeColor,
-              letterSpacing: "0.05em",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {modeLabel}
-          </span>
-        ) : null}
-
-        <kbd
-          title="Toggle auto / manual"
+      {modeLabel ? (
+        <span
           style={{
-            fontSize: "9px",
-            fontFamily: "system-ui, Segoe UI, sans-serif",
+            fontSize: "8px",
             fontWeight: 700,
-            padding: "3px 7px",
-            borderRadius: "6px",
-            background: "transparent",
-            border: "1px solid rgba(154,154,176,0.45)",
-            color: "#1db954",
+            color: modeColor,
+            letterSpacing: "0.04em",
             whiteSpace: "nowrap",
-            flexShrink: 0,
+            flex: "0 0 auto",
           }}
         >
-          {playLabel}
-        </kbd>
+          {modeLabel}
+        </span>
+      ) : null}
 
-        {lastEvent ? (
-          <span style={judgementStyle(lastEvent.judgement)}>
-            {lastEvent.judgement}
-          </span>
-        ) : (
-          <span
-            style={{
-              fontSize: "9px",
-              fontWeight: 600,
-              color: "#444",
-              letterSpacing: "0.05em",
-            }}
-          >
-            —
-          </span>
-        )}
-      </div>
-
-      <span
-        title={lanes}
+      <kbd
+        title="Toggle auto / manual"
         style={{
-          fontSize: "9px",
-          fontWeight: 600,
-          color: "rgba(255,255,255,0.88)",
-          letterSpacing: "0.06em",
+          fontSize: "8px",
+          fontFamily: "system-ui, Segoe UI, sans-serif",
+          fontWeight: 700,
+          padding: "2px 5px",
+          borderRadius: "4px",
+          background: "transparent",
+          border: "1px solid rgba(154,154,176,0.4)",
+          color: "#1db954",
           whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          minWidth: 0,
-          flex: "1 1 120px",
-          maxWidth: "100%",
-          textAlign: "right",
+          flex: "0 0 auto",
         }}
       >
-        {lanes}
-      </span>
+        {playLabel}
+      </kbd>
+
+      {lastEvent ? (
+        <span style={{ ...judgementStyle(lastEvent.judgement), flex: "0 0 auto" }}>
+          {lastEvent.judgement}
+        </span>
+      ) : (
+        <span
+          style={{
+            fontSize: "8px",
+            fontWeight: 600,
+            color: "#444",
+            flex: "0 0 auto",
+          }}
+        >
+          —
+        </span>
+      )}
+
+      <div
+        style={{
+          marginLeft: "auto",
+          display: "flex",
+          alignItems: "center",
+          gap: "3px",
+          minWidth: 0,
+          flex: "1 1 auto",
+          justifyContent: "flex-end",
+        }}
+      >
+        <span
+          title={lanes}
+          style={{
+            fontSize: "8px",
+            fontWeight: 600,
+            color: "rgba(255,255,255,0.88)",
+            letterSpacing: "0.05em",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            minWidth: 0,
+            textAlign: "right",
+          }}
+        >
+          {lanes}
+        </span>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          title="Settings"
+          className="play-bottom-settings-btn"
+        >
+          ⚙
+        </button>
+      </div>
     </div>
   );
 }

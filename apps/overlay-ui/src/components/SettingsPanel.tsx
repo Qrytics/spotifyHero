@@ -42,20 +42,23 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
 
   const inputStyle: React.CSSProperties = {
     width: "100%",
-    padding: "8px 10px",
-    fontSize: "12px",
-    borderRadius: "6px",
+    padding: "4px 8px",
+    fontSize: "11px",
+    lineHeight: 1.3,
+    borderRadius: "4px",
     border: "1px solid #333",
     background: "#12121a",
     color: "var(--text)",
     boxSizing: "border-box",
+    appearance: "none",
   };
 
   const labelStyle: React.CSSProperties = {
-    fontSize: "10px",
+    fontSize: "9px",
     color: "var(--text-muted)",
-    marginBottom: "4px",
+    marginBottom: "3px",
     display: "block",
+    fontWeight: 600,
   };
 
   return (
@@ -70,25 +73,27 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        padding: "16px",
+        padding: "10px",
       }}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
+        className="settings-dialog-panel thin-scrollbar"
         style={{
           width: "100%",
-          maxWidth: "320px",
-          maxHeight: "90%",
-          overflow: "auto",
+          maxWidth: "300px",
+          maxHeight: "min(88vh, 520px)",
+          overflowY: "auto",
+          overflowX: "hidden",
           background: "var(--surface)",
-          borderRadius: "12px",
+          borderRadius: "8px",
           border: "1px solid #2a2a32",
-          padding: "16px",
+          padding: "10px 12px",
           display: "flex",
           flexDirection: "column",
-          gap: "12px",
+          gap: "8px",
         }}
       >
         <div
@@ -98,7 +103,7 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
             alignItems: "center",
           }}
         >
-          <span style={{ fontSize: "14px", fontWeight: 700, color: "var(--text)" }}>
+          <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text)" }}>
             Settings
           </span>
           <button
@@ -109,8 +114,9 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
               background: "transparent",
               color: "var(--text-muted)",
               cursor: "pointer",
-              fontSize: "18px",
+              fontSize: "16px",
               lineHeight: 1,
+              padding: "2px 4px",
             }}
             aria-label="Close"
           >
@@ -118,10 +124,10 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
           </button>
         </div>
 
-        <p style={{ fontSize: "10px", color: "var(--text-muted)", lineHeight: 1.45, margin: 0 }}>
+        <p style={{ fontSize: "9px", color: "var(--text-muted)", lineHeight: 1.4, margin: 0 }}>
           Use <strong style={{ color: "var(--text)" }}>{formatKeybindLabel(draft.playKeybind)}</strong>{" "}
-          during a song to switch between{" "}
-          <strong style={{ color: "var(--text)" }}>manual</strong> (you hit lanes) and{" "}
+          during a song to switch{" "}
+          <strong style={{ color: "var(--text)" }}>manual</strong> ↔{" "}
           <strong style={{ color: "var(--text)" }}>autoplay</strong>.
         </p>
 
@@ -135,9 +141,8 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
             autoComplete="off"
             spellCheck={false}
           />
-          <span style={{ fontSize: "9px", color: "#666", marginTop: "4px", display: "block" }}>
-            Type <code style={{ color: "var(--accent)" }}>Space</code> or a letter (e.g.{" "}
-            <code style={{ color: "var(--accent)" }}>p</code>).
+          <span style={{ fontSize: "8px", color: "#666", marginTop: "2px", display: "block" }}>
+            <code style={{ color: "var(--accent)" }}>Space</code> or a letter.
           </span>
         </div>
 
@@ -147,13 +152,13 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(4, 1fr)",
-              gap: "6px",
+              gap: "4px",
             }}
           >
             {([0, 1, 2, 3] as const).map((i) => (
               <input
                 key={i}
-                style={{ ...inputStyle, textAlign: "center", padding: "8px 4px" }}
+                style={{ ...inputStyle, textAlign: "center", padding: "4px 2px" }}
                 maxLength={8}
                 value={draft.laneKeys[i]}
                 onChange={(e) => setLane(i, e.target.value)}
@@ -181,34 +186,36 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
         <label
           style={{
             display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            fontSize: "11px",
+            alignItems: "flex-start",
+            gap: "6px",
+            fontSize: "9px",
             color: "var(--text)",
             cursor: "pointer",
+            lineHeight: 1.35,
           }}
         >
           <input
             type="checkbox"
             checked={draft.autoplay}
             onChange={(e) => set("autoplay")(e.target.checked)}
+            style={{ marginTop: "2px", flexShrink: 0 }}
           />
-          Start new songs in autoplay (otherwise manual first)
+          Start new songs in autoplay
         </label>
 
-        <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+        <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>
           <button
             type="button"
             onClick={save}
             style={{
               flex: 1,
-              padding: "10px",
-              borderRadius: "8px",
+              padding: "6px 8px",
+              borderRadius: "6px",
               border: "none",
               background: "var(--accent)",
               color: "#0d0d0f",
               fontWeight: 700,
-              fontSize: "12px",
+              fontSize: "11px",
               cursor: "pointer",
             }}
           >
@@ -218,12 +225,12 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
             type="button"
             onClick={onClose}
             style={{
-              padding: "10px 14px",
-              borderRadius: "8px",
+              padding: "6px 10px",
+              borderRadius: "6px",
               border: "1px solid #444",
               background: "transparent",
               color: "var(--text-muted)",
-              fontSize: "12px",
+              fontSize: "11px",
               cursor: "pointer",
             }}
           >

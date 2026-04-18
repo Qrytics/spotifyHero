@@ -1,14 +1,10 @@
 import React from "react";
 import { useGameStore } from "../store/gameStore.js";
 
-type Props = {
-  onOpenSettings: () => void;
-};
-
 /**
- * HUD – track info, score, settings entry (mode/keybind/judgement bar lives in PlayBottomBar).
+ * HUD – track info and score (mode/keybind/settings control lives in PlayBottomBar).
  */
-export function HUD({ onOpenSettings }: Props): React.ReactElement {
+export function HUD(): React.ReactElement {
   const score = useGameStore((s) => s.score);
   const combo = useGameStore((s) => s.combo);
   const playback = useGameStore((s) => s.playback);
@@ -67,37 +63,31 @@ export function HUD({ onOpenSettings }: Props): React.ReactElement {
             {artist}
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: "6px", flexShrink: 0 }}>
-          <button
-            type="button"
-            onClick={onOpenSettings}
-            title="Settings"
+        <div
+          style={{
+            textAlign: "right",
+            flexShrink: 0,
+            minWidth: "fit-content",
+          }}
+        >
+          <div
             style={{
-              border: "1px solid #333",
-              background: "#222",
-              color: "var(--text-muted)",
-              borderRadius: "6px",
-              padding: "4px 8px",
-              fontSize: "11px",
-              cursor: "pointer",
-              lineHeight: 1,
+              fontSize: "12px",
+              fontWeight: 800,
+              color: "var(--text)",
+              fontVariantNumeric: "tabular-nums",
             }}
           >
-            ⚙
-          </button>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: "12px", fontWeight: 800, color: "var(--text)" }}>
-              {score.toLocaleString()}
-            </div>
-            <div
-              style={{
-                fontSize: "9px",
-                color: "var(--accent)",
-                fontWeight: 600,
-              }}
-            >
-              {combo > 1 ? `×${combo} COMBO` : ""}
-            </div>
+            {score.toLocaleString()}
+          </div>
+          <div
+            style={{
+              fontSize: "9px",
+              color: "var(--accent)",
+              fontWeight: 600,
+            }}
+          >
+            {combo > 1 ? `×${combo} COMBO` : ""}
           </div>
         </div>
       </div>

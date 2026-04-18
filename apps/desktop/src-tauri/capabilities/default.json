@@ -6,5 +6,14 @@
   "remote": {
     "urls": ["http://localhost:1420/*", "http://127.0.0.1:1420/*"]
   },
-  "permissions": ["core:default", "shell:default", "store:default"]
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "store:default",
+    "core:window:allow-minimize",
+    "core:window:allow-maximize",
+    "core:window:allow-close",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-start-dragging"
+  ]
 }

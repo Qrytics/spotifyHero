@@ -183,16 +183,17 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   onScoreEvent: (event, totalNotes) =>
     set((state) => {
-      const hits =
-        event.judgement !== "miss" ? state.score + event.pointsAwarded : state.score;
-      const combo = event.combo;
+      const pts = Number(event.pointsAwarded);
+      const awarded = Number.isFinite(pts) ? pts : 0;
+      const nextScore =
+        event.judgement !== "miss" ? state.score + awarded : state.score;
+      const combo = Number.isFinite(event.combo) ? event.combo : 0;
       const maxCombo = Math.max(state.maxCombo, combo);
-      const accuracy = state.accuracy;
       return {
-        score: hits,
+        score: nextScore,
         combo,
         maxCombo,
-        accuracy,
+        accuracy: state.accuracy,
         lastScoreEvent: event,
       };
     }),

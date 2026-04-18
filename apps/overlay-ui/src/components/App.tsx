@@ -11,6 +11,7 @@ import { useGameLoop } from "../hooks/useGameLoop.js";
 import { useKeybinds } from "../hooks/useKeybinds.js";
 import { SpotifyDiagnosticsPanel } from "./SpotifyDiagnosticsPanel.js";
 import { SettingsPanel } from "./SettingsPanel.js";
+import { WindowChrome } from "./WindowChrome.js";
 
 export function App(): React.ReactElement {
   const phase = useGameStore((s) => s.phase);
@@ -34,6 +35,7 @@ export function App(): React.ReactElement {
         background: "var(--bg)",
       }}
     >
+      <WindowChrome />
       {(phase === "autoplay" || phase === "manual" || phase === "paused") && (
         <div
           style={{
@@ -43,11 +45,11 @@ export function App(): React.ReactElement {
             minHeight: 0,
           }}
         >
-          <HUD onOpenSettings={() => setSettingsOpen(true)} />
+          <HUD />
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <NoteHighway />
           </div>
-          <PlayBottomBar />
+          <PlayBottomBar onOpenSettings={() => setSettingsOpen(true)} />
         </div>
       )}
 
