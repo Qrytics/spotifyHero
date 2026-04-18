@@ -579,6 +579,55 @@ export function mergeAdjacentHoldNotes(
   return merged;
 }
 
+/**
+ * Merge back-to-back sustains on the same lane into one hold. Assignment uses
+ * `maxConsecutiveSustains`, which restarts the sustain chain and emits several short holds whose
+ * tails meet the next hold's head; musically that is one long press.
+ */
+export function mergeContiguousSustainSeries(notes: readonly Note[]): Note[] {
+  const eps = 0.5;
+  if (notes.length === 0) return [];
+
+  const maxLane = notes.reduce((m, n) => Math.max(m, n.lane), 0);
+  const buckets: Note[][] = Array.from({ length: maxLane + 1 }, () => []);
+
+  for (const n of notes) {
+    const lane = n.lane;
+    if (lane >= 0 && lane < buckets.length) {
+      buckets[lane]!.push(n);
+    }
+  }
+
+  const out: Note[] = [];
+  for (let lane = 0; lane < buckets.length; lane++) {
+    const laneNotes = buckets[lane]!.sort((a, b) => a.timeMs - b.timeMs);
+    let i = 0;
+    while (i < laneNotes.length) {
+      const cur = laneNotes[i]!;
+      if (cur.durationMs <= eps) {
+        out.push({ timeMs: cur.timeMs, lane, durationMs: 0 });
+        i += 1;
+        continue;
+      }
+      const head = cur.timeMs;
+      let tail = cur.timeMs + cur.durationMs;
+      let j = i + 1;
+      while (j < laneNotes.length) {
+        const next = laneNotes[j]!;
+        if (next.durationMs <= eps) break;
+        if (Math.abs(next.timeMs - tail) > eps) break;
+        tail = next.timeMs + next.durationMs;
+        j += 1;
+      }
+      out.push({ timeMs: head, lane, durationMs: tail - head });
+      i = j;
+    }
+  }
+
+  out.sort((a, b) => a.timeMs - b.timeMs || a.lane - b.lane);
+  return out;
+}
+
 function mix32(n: number): number {
   let x = n | 0;
   x = Math.imul(x ^ (x >>> 16), 0x7feb352d);
@@ -780,14 +829,15 @@ export function generateDeterministicChart(
     preset,
     bpm
   );
-  logChartStats(trackId, difficulty, validatedNotes);
+  const mergedSustains = mergeContiguousSustainSeries(validatedNotes);
+  logChartStats(trackId, difficulty, mergedSustains);
 
   return {
     trackId,
     difficulty,
-    notes: validatedNotes,
+    notes: mergedSustains,
     bpm,
-    generatorVersion: "deterministic-1.6",
+    generatorVersion: "deterministic-1.7",
     generatedAt: new Date(),
   };
 }
@@ -897,7 +947,7 @@ export class HybridChartGenerator {
 
     return {
       ...baseline,
-      notes: result.notes,
+      notes: mergeContiguousSustainSeries(result.notes),
       generatorVersion: `hybrid-ml-${result.modelVersion}`,
     };
   }

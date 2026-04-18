@@ -57,6 +57,24 @@ alter table leaderboard_entries add column if not exists user_id uuid;
 ### Row-level security
 Enable RLS; allow anonymous inserts and selects (public leaderboard).
 
+Copy-paste the full script from `supabase/migrations/20260418120000_leaderboard_entries.sql` into **Supabase → SQL Editor → Run** (it is idempotent). That file creates the table, indexes, RLS policies, and grants for `anon` / `authenticated`.
+
+Minimal equivalent:
+
+```sql
+alter table leaderboard_entries enable row level security;
+
+create policy "leaderboard_entries_select_public"
+  on public.leaderboard_entries for select
+  using (true);
+
+create policy "leaderboard_entries_insert_public"
+  on public.leaderboard_entries for insert
+  with check (true);
+
+grant select, insert on public.leaderboard_entries to anon, authenticated;
+```
+
 ### Challenge share URL
 `{supabase_url}/challenge?track={trackId}&diff={difficulty}&score={score}&session={sessionId}`
 

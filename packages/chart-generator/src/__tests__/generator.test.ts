@@ -5,6 +5,7 @@ import {
   HybridChartGenerator,
   PassthroughMLRefiner,
   mergeAdjacentHoldNotes,
+  mergeContiguousSustainSeries,
   DIFFICULTY_PARAMS,
 } from "../index.js";
 import type { BeatEvent, Note } from "@spotifyhero/shared-types";
@@ -223,12 +224,12 @@ describe("generateDeterministicChart", () => {
     }
   });
 
-  it("uses deterministic-1.6 generator version", () => {
+  it("uses deterministic-1.7 generator version", () => {
     const beats = makeBeatEvents(5, 500);
     const chart = generateDeterministicChart("v", beats, 120, {
       difficulty: "medium",
     });
-    expect(chart.generatorVersion).toBe("deterministic-1.6");
+    expect(chart.generatorVersion).toBe("deterministic-1.7");
   });
 
   it("confidence-first filter with mixed strengths yields fewer easy notes than expert", () => {
@@ -319,18 +320,19 @@ describe("generateDeterministicChart", () => {
     }
   });
 
-  it("enforces hard cap for consecutive sustain chains", () => {
-    const beats = makeBeatEvents(300, 120);
-    const chart = generateDeterministicChart("chain-cap", beats, 125, {
-      difficulty: "easy",
+  it("merges same-lane sustain chains into one hold after assignment cap", () => {
+    const merged = mergeContiguousSustainSeries([
+      { timeMs: 0, lane: 0, durationMs: 400 },
+      { timeMs: 400, lane: 0, durationMs: 300 },
+      { timeMs: 700, lane: 0, durationMs: 0 },
+    ]);
+    expect(merged).toHaveLength(2);
+    expect(merged[0]).toMatchObject({
+      timeMs: 0,
+      lane: 0,
+      durationMs: 700,
     });
-    const maxRun = DIFFICULTY_PARAMS.easy.maxConsecutiveSustains;
-    let run = 0;
-    for (const note of chart.notes) {
-      if (note.durationMs > 0) run += 1;
-      else run = 0;
-      expect(run).toBeLessThanOrEqual(maxRun);
-    }
+    expect(merged[1]).toMatchObject({ timeMs: 700, lane: 0, durationMs: 0 });
   });
 
   it("suppresses note generation during confirmed silence windows", () => {
@@ -431,7 +433,7 @@ describe("HybridChartGenerator", () => {
     const gen = new HybridChartGenerator(new PassthroughMLRefiner(), 0.65);
     const beats = makeBeatEvents(20, 500);
     const chart = await gen.generate("t", beats, 120, { difficulty: "medium" });
-    expect(chart.generatorVersion).toBe("deterministic-1.6");
+    expect(chart.generatorVersion).toBe("deterministic-1.7");
   });
 
   it("returns a valid chart shape", async () => {

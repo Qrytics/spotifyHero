@@ -51,6 +51,9 @@ const HOLD_STRIP_GHOST_SWEEP_MS = 520;
 /** Small temporal epsilon to avoid precision edge-cases around sustain tails. */
 const TIME_EPSILON_MS = 0.01;
 
+/** Draw order is time-sorted; score events and visibility use chart `notes` indices — keep both. */
+type SortedNote = { note: Note; chartIndex: number };
+
 type HitFx = { lane: number; judgement: Judgement; t0: number };
 
 /** Canvas note visibility — updated from score events (same closure as highway loop). */
@@ -98,50 +101,59 @@ function easeOutCubic(t: number): number {
   return 1 - (1 - x) ** 3;
 }
 
-/** First index with notes[i].timeMs >= t (notes sorted by timeMs ascending). */
-function lowerBoundTime(notes: readonly Note[], t: number): number {
+/** First index with sortedNotes[i].note.timeMs >= t (sorted by timeMs ascending). */
+function lowerBoundSortedTime(sortedNotes: readonly SortedNote[], t: number): number {
   let lo = 0;
-  let hi = notes.length;
+  let hi = sortedNotes.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if (notes[mid]!.timeMs < t) lo = mid + 1;
+    if (sortedNotes[mid]!.note.timeMs < t) lo = mid + 1;
     else hi = mid;
   }
   return lo;
 }
 
 /**
- * Notes whose head lies inside another sustain's body on the same lane (by **time**, not chart
- * index order). Fixes inner gems when the chart lists taps before the parent hold.
+ * Notes that should not draw a highway gem because another sustain on the lane already covers
+ * that time: (1) head strictly inside another sustain's (head, tail), (2) tap whose head matches
+ * another sustain's tail (next onset — avoids double tail cap + gem).
  */
 function occludedInsideSustain(
-  notes: readonly Note[],
+  sortedNotes: readonly SortedNote[],
   leadInMs: number
 ): Set<number> {
   const out = new Set<number>();
   const eps = TIME_EPSILON_MS;
 
   for (let lane = 0; lane < LANE_COUNT; lane++) {
-    const sustains: { idx: number; head: number; tail: number }[] = [];
-    for (let idx = 0; idx < notes.length; idx++) {
-      const note = notes[idx]!;
+    const sustains: { chartIndex: number; head: number; tail: number }[] = [];
+    for (let k = 0; k < sortedNotes.length; k++) {
+      const { note, chartIndex } = sortedNotes[k]!;
       if (note.lane !== lane) continue;
       if (note.durationMs <= eps) continue;
       const h = noteHeadTimeMs(note, leadInMs);
       const t = noteTailTimeMs(note, leadInMs);
       if (t <= h + eps) continue;
-      sustains.push({ idx, head: h, tail: t });
+      sustains.push({ chartIndex, head: h, tail: t });
     }
     sustains.sort((a, b) => a.head - b.head || a.tail - b.tail);
 
-    for (let idx = 0; idx < notes.length; idx++) {
-      const note = notes[idx]!;
+    for (let k = 0; k < sortedNotes.length; k++) {
+      const { note, chartIndex } = sortedNotes[k]!;
       if (note.lane !== lane) continue;
       const h = noteHeadTimeMs(note, leadInMs);
       for (const s of sustains) {
-        if (s.idx === idx) continue;
+        if (s.chartIndex === chartIndex) continue;
         if (h > s.head + eps && h < s.tail - eps) {
-          out.add(idx);
+          out.add(chartIndex);
+          break;
+        }
+        const tailSlop = Math.max(eps, 0.5);
+        if (
+          note.durationMs <= eps &&
+          Math.abs(h - s.tail) <= tailSlop
+        ) {
+          out.add(chartIndex);
           break;
         }
       }
@@ -151,7 +163,10 @@ function occludedInsideSustain(
   return out;
 }
 
-/** Sustain body: flat by the head gem, full pill cap at the tail (farther in time, smaller screen Y). */
+/**
+ * Sustain body: stadium / pill — rounded caps at both ends.
+ * `cyHead` should be the **outer** head end (past gem center) so the cap overlaps the head gem ring.
+ */
 function paintSustainBodyPath(
   ctx: CanvasRenderingContext2D,
   cx: number,
@@ -175,7 +190,7 @@ export function NoteHighway(): React.ReactElement {
   const rafRef = useRef<number>(0);
   const dimsRef = useRef({ cssW: -1, cssH: -1 });
   const staticRef = useRef<{ key: string; off: HTMLCanvasElement } | null>(null);
-  const sortedNotesRef = useRef<readonly Note[]>([]);
+  const sortedNotesRef = useRef<readonly SortedNote[]>([]);
 
   useEffect(() => {
     if (!chart?.notes) {
@@ -183,8 +198,13 @@ export function NoteHighway(): React.ReactElement {
       return;
     }
     const raw = chart.notes;
-    if (raw.length <= 1) {
-      sortedNotesRef.current = raw;
+    if (raw.length === 0) {
+      sortedNotesRef.current = [];
+      return;
+    }
+    const withIdx = raw.map((note, chartIndex) => ({ note, chartIndex }));
+    if (raw.length === 1) {
+      sortedNotesRef.current = withIdx;
       return;
     }
     let sorted = true;
@@ -194,7 +214,9 @@ export function NoteHighway(): React.ReactElement {
         break;
       }
     }
-    sortedNotesRef.current = sorted ? raw : [...raw].sort((a, b) => a.timeMs - b.timeMs);
+    sortedNotesRef.current = sorted
+      ? withIdx
+      : [...withIdx].sort((a, b) => a.note.timeMs - b.note.timeMs);
   }, [chart]);
 
   useEffect(() => {
@@ -397,12 +419,12 @@ export function NoteHighway(): React.ReactElement {
         Math.max(0.45, state.settings.noteScrollSpeed ?? 1)
       );
       const lookAheadEffective = LOOK_AHEAD_MS / spd;
-      const notesToPaint = isSpotifyPlaybackTooQuietForNotes(state.playback)
-        ? []
-        : sortedNotesRef.current;
+      const sorted = sortedNotesRef.current;
+      const notesToPaint = isSpotifyPlaybackTooQuietForNotes(state.playback) ? [] : sorted;
       paintNotes(
         ctx,
         notesToPaint,
+        c.notes,
         pos,
         lw,
         lh,
@@ -519,18 +541,19 @@ function hexWithAlphaStatic(hex: string, alpha: number): string {
  */
 function paintNotes(
   ctx: CanvasRenderingContext2D,
-  notes: readonly Note[],
+  sortedNotes: readonly SortedNote[],
+  chartNotes: readonly Note[],
   positionMs: number,
   width: number,
   height: number,
   vis: NoteVisibility,
   lookAheadMs: number
 ): void {
-  const n = notes.length;
+  const n = sortedNotes.length;
   if (n === 0) return;
 
   const L = CHART_LEAD_IN_MS;
-  const occluded = occludedInsideSustain(notes, L);
+  const occluded = occludedInsideSustain(sortedNotes, L);
 
   const laneWidth = width / LANE_COUNT;
   const hitLineY = hitLineYFromHeight(height);
@@ -538,9 +561,9 @@ function paintNotes(
 
   const tLow = positionMs - LOOK_BACK_MS;
   const tHigh = positionMs + lookAheadMs + SCROLL_IN_EXTRA_MS;
-  let i = lowerBoundTime(notes, tLow - L);
+  let i = lowerBoundSortedTime(sortedNotes, tLow - L);
   while (i > 0) {
-    const prev = notes[i - 1]!;
+    const prev = sortedNotes[i - 1]!.note;
     const prevEnd = noteTailTimeMs(prev, L);
     if (prevEnd >= tLow) i -= 1;
     else break;
@@ -549,10 +572,10 @@ function paintNotes(
   ctx.strokeStyle = "rgba(255,255,255,0.42)";
 
   for (; i < n; i++) {
-    const note = notes[i]!;
-    if (vis.goneTap.has(i)) continue;
-    if (vis.missSlide.has(i)) continue;
-    if (occluded.has(i)) continue;
+    const { note, chartIndex } = sortedNotes[i]!;
+    if (vis.goneTap.has(chartIndex)) continue;
+    if (vis.missSlide.has(chartIndex)) continue;
+    if (occluded.has(chartIndex)) continue;
 
     const headT = noteHeadTimeMs(note, L);
     const endMs = noteTailTimeMs(note, L);
@@ -568,25 +591,24 @@ function paintNotes(
     const hex = LANE_HEX[lane] ?? "#ffffff";
     const pulse = timeUntil > 900 || timeUntil < -900 ? 0 : 1 - Math.abs(timeUntil) / 900;
     const glowR = NOTE_RADIUS + 5 + pulse * 3;
-    const sustain = vis.activeSustains.get(i);
+    const sustain = vis.activeSustains.get(chartIndex);
     const holdStripOnly = note.durationMs > 0 && sustain?.headHidden === true;
 
     if (note.durationMs > 0) {
       const cyTail = yFromTime(hitLineY, pxPerMs, endMs, positionMs);
-      const top = Math.min(cy, cyTail);
-      const h = Math.abs(cyTail - cy);
+      const cyHeadBar = cy + NOTE_RADIUS;
+      const h = Math.abs(cyTail - cyHeadBar);
       const bodyW = NOTE_RADIUS * 2.35;
-      const rTail = Math.min(bodyW * 0.5, h * 0.5);
-      const rHead = Math.min(2.5, bodyW * 0.1);
-      const cornerRadii = [rTail, rTail, rHead, rHead] as const;
+      const rCap = Math.min(bodyW * 0.5, h * 0.5);
+      const cornerRadii = [rCap, rCap, rCap, rCap] as const;
       ctx.globalAlpha = holdStripOnly ? 0.88 : 0.84;
       ctx.fillStyle = hex;
-      paintSustainBodyPath(ctx, cx, cy, cyTail, bodyW, cornerRadii);
+      paintSustainBodyPath(ctx, cx, cyHeadBar, cyTail, bodyW, cornerRadii);
       ctx.fill();
       ctx.globalAlpha = holdStripOnly ? 0.95 : 0.9;
       ctx.strokeStyle = "rgba(255,255,255,0.35)";
       ctx.lineWidth = 1.5;
-      paintSustainBodyPath(ctx, cx, cy, cyTail, bodyW, cornerRadii);
+      paintSustainBodyPath(ctx, cx, cyHeadBar, cyTail, bodyW, cornerRadii);
       ctx.stroke();
     }
 
@@ -613,7 +635,7 @@ function paintNotes(
   ctx.globalAlpha = 1;
 
   for (const [idx, sustain] of [...vis.activeSustains.entries()]) {
-    const note = notes[idx];
+    const note = chartNotes[idx];
     if (!note || note.durationMs <= 0) {
       vis.activeSustains.delete(idx);
       continue;
@@ -625,7 +647,7 @@ function paintNotes(
 
   paintMissSlidingNotes(
     ctx,
-    notes,
+    chartNotes,
     positionMs,
     width,
     height,
@@ -704,7 +726,8 @@ function paintMissSlidingNotes(
     const cx = lane * laneWidth + laneWidth / 2;
     const cy = yFromTime(hitLineY, pxPerMs, headT, positionMs);
     const cyTail = yFromTime(hitLineY, pxPerMs, endMs, positionMs);
-    const bottom = Math.max(cy, cyTail);
+    const cyHeadBar = note.durationMs > 0 ? cy + NOTE_RADIUS : cy;
+    const bottom = Math.max(cyHeadBar, cyTail);
 
     if (bottom > height + OFF_SCREEN_BOTTOM_PAD) {
       toRemove.push(idx);
@@ -715,20 +738,18 @@ function paintMissSlidingNotes(
     const pulse = 0.35;
 
     if (note.durationMs > 0) {
-      const top = Math.min(cy, cyTail);
-      const h = Math.abs(cyTail - cy);
+      const h = Math.abs(cyTail - cyHeadBar);
       const bodyW = NOTE_RADIUS * 2.35;
-      const rTail = Math.min(bodyW * 0.5, h * 0.5);
-      const rHead = Math.min(2.5, bodyW * 0.1);
-      const cornerRadii = [rTail, rTail, rHead, rHead] as const;
+      const rCap = Math.min(bodyW * 0.5, h * 0.5);
+      const cornerRadii = [rCap, rCap, rCap, rCap] as const;
       ctx.globalAlpha = 0.35;
       ctx.fillStyle = hex;
-      paintSustainBodyPath(ctx, cx, cy, cyTail, bodyW, cornerRadii);
+      paintSustainBodyPath(ctx, cx, cyHeadBar, cyTail, bodyW, cornerRadii);
       ctx.fill();
       ctx.globalAlpha = 0.55;
       ctx.strokeStyle = "rgba(255,82,82,0.55)";
       ctx.lineWidth = 2;
-      paintSustainBodyPath(ctx, cx, cy, cyTail, bodyW, cornerRadii);
+      paintSustainBodyPath(ctx, cx, cyHeadBar, cyTail, bodyW, cornerRadii);
       ctx.stroke();
     }
 

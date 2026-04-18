@@ -22,6 +22,22 @@ type LeaderboardData = {
 
 const LEADERBOARD_LIMIT = 8;
 
+/** Turn PostgREST PGRST205 etc. into setup instructions (table not created in Dashboard yet). */
+function formatLeaderboardFetchError(message: string): string {
+  if (
+    message.includes("PGRST205") ||
+    message.includes("Could not find the table") ||
+    (message.includes("leaderboard_entries") && message.includes("schema cache"))
+  ) {
+    return (
+      "Leaderboard table is missing in your Supabase project. In the Supabase Dashboard open " +
+      "SQL Editor, paste and run `supabase/migrations/20260418120000_leaderboard_entries.sql`, " +
+      "then reopen this panel."
+    );
+  }
+  return message;
+}
+
 async function fetchFollowedSpotifyUserIdsTauri(): Promise<string[]> {
   if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
     return [];
@@ -101,7 +117,8 @@ export function LeaderboardPanel({
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
+          const raw = err instanceof Error ? err.message : String(err);
+          setError(formatLeaderboardFetchError(raw));
         }
       } finally {
         if (!cancelled) setBusy(false);

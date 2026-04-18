@@ -48,26 +48,31 @@ and should **not** show extra notes inside the sustain body.
 Likely causes:
 
 1. **Lane/time overlap edge cases** where generated notes are near-equal timestamps and strict comparisons (`>` / `<`) miss occlusion candidates.
-2. **Different note order/index assumptions** between sorted draw list and score-event visibility tracking (`goneTap`, `missSlide`, `activeSustains`) can allow a note to render before being suppressed.
+2. **Different note order/index assumptions** between sorted draw list and score-event visibility tracking (`goneTap`, `missSlide`, `activeSustains`) can allow a note to render before being suppressed. (Addressed by carrying **chart index** alongside time-sorted draw entries.)
 3. **Hold rendering + parallel note rendering** can still show a separate note gem when that note is not classified as "inside" due to boundary math.
 4. **Regeneration/state timing** during `dev:desktop` can keep old chart data visible unless track changes/regenerates after code edits.
+5. **Tail junction (most common in deterministic charts):** A sustain’s musical end is the **next same-lane onset’s head time**. That note is **not** strictly *between* `head` and `tail` (it lies on the **tail** boundary), so strict `(head, tail)` occlusion never hid it. The highway still draws that note’s **gem** at the same screen position as the sustain’s **rounded tail cap**, which looks like an extra gem on the sustain.
 
 ## Current confirmed behavior
 
 - Bottom-bar and leaderboard UI updates are hot-reloadable in `pnpm dev:desktop`.
-- Sustain occlusion logic is present in code, but user still sees inner notes in real usage.
+- Deterministic generation ties each sustain’s duration to the **next** same-lane onset, so there are usually **no** same-lane taps strictly between head and tail; “inner” reports are often the **tail-boundary** gem (see above).
 
 ## Fix applied (lane + time order)
 
-Occlusion now builds, **per lane**, a list of sustain intervals `(head, tail)` sorted by time, then marks any note (tap or inner sustain) whose head lies **strictly between** `sustain.head` and `sustain.tail` as hidden.
+Occlusion builds, **per lane**, a list of sustain intervals `(head, tail)` sorted by time, then marks any note (tap or inner sustain) whose head lies **strictly between** `sustain.head` and `sustain.tail` as hidden.
 
-This fixes the common chart case where **note array order** listed interior taps *before* the parent sustain — the old implementation only considered parents earlier in the file.
+Draw order uses `{ note, chartIndex }` so occlusion and score-event visibility share the same **chart index** (fixes cases where chart file order ≠ time order).
+
+## Fix applied (tail-boundary tap)
+
+For each sustain on a lane, any **tap** (`durationMs === 0`) whose head time matches that sustain’s **tail** time (within a small ms slop) is **not drawn as a gem**. The sustain body already renders the tail; the next note is still judged as before—only the duplicate gem is suppressed. **Hold** heads at that time are still drawn (hold chains).
 
 ## Next steps if issues remain
 
-1. Tune epsilon if chart times are quantized and boundaries touch.
+1. Tune `TIME_EPSILON_MS` / tail slop if chart times are floats or quantized oddly.
 2. Add a dev-only overlay listing parent intervals vs candidate heads.
-3. Optionally strip colliding notes in `chart-generator` so gameplay and visuals always agree.
+3. Optionally strip colliding notes in `chart-generator` if a pipeline ever emits true interior same-lane taps.
 
 ## Quick manual test checklist
 

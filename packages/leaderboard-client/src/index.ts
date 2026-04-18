@@ -6,6 +6,31 @@ import type {
   LeaderboardEntry,
 } from "@spotifyhero/shared-types";
 
+/**
+ * PostgREST URLs are `${project}/rest/v1/...`. `VITE_SUPABASE_URL` often includes a trailing `/`
+ * or accidentally includes `/rest/v1`, which creates bad paths (`//rest` or `/rest/v1/rest/v1`) and **404**s.
+ */
+export function normalizeSupabaseProjectUrl(url: string): string {
+  let u = url.trim();
+  u = u.replace(/\/+$/, "");
+  if (u.endsWith("/rest/v1")) {
+    u = u.slice(0, -"/rest/v1".length);
+  }
+  return u.replace(/\/+$/, "");
+}
+
+async function throwIfRestNotOk(res: Response, label: string): Promise<void> {
+  if (res.ok) return;
+  let extra = "";
+  try {
+    const t = await res.text();
+    if (t) extra = ` — ${t.slice(0, 220)}`;
+  } catch {
+    /* ignore */
+  }
+  throw new Error(`${label} failed (${res.status})${extra}`);
+}
+
 // ---------------------------------------------------------------------------
 // Interface
 // ---------------------------------------------------------------------------
@@ -67,10 +92,11 @@ export class SupabaseLeaderboardClient implements LeaderboardClient {
   private readonly spotifyUserId: string | undefined;
 
   constructor(config: SupabaseClientConfig) {
-    this.baseUrl = config.url;
+    this.baseUrl = normalizeSupabaseProjectUrl(config.url);
     this.playerName = config.playerName ?? "Anonymous";
     this.headers = {
       "Content-Type": "application/json",
+      Accept: "application/json",
       apikey: config.anonKey,
       Authorization: `Bearer ${config.accessToken ?? config.anonKey}`,
     };
@@ -96,9 +122,7 @@ export class SupabaseLeaderboardClient implements LeaderboardClient {
       { headers: this.headers }
     );
 
-    if (!res.ok) {
-      throw new Error(`Leaderboard fetch failed: ${res.status}`);
-    }
+    await throwIfRestNotOk(res, "Leaderboard fetch");
 
     const rows = (await res.json()) as Array<Record<string, unknown>>;
     const entries: LeaderboardEntry[] = rows.map((row, i) => ({
@@ -139,9 +163,7 @@ export class SupabaseLeaderboardClient implements LeaderboardClient {
       `${this.baseUrl}/rest/v1/leaderboard_entries?${params}`,
       { headers: this.headers }
     );
-    if (!res.ok) {
-      throw new Error(`Friend leaderboard fetch failed: ${res.status}`);
-    }
+    await throwIfRestNotOk(res, "Friend leaderboard fetch");
     const rows = (await res.json()) as Array<Record<string, unknown>>;
     const entries: LeaderboardEntry[] = rows.map((row, i) => ({
       rank: i + 1,
@@ -177,7 +199,11 @@ export class SupabaseLeaderboardClient implements LeaderboardClient {
       { headers: this.headers }
     );
     if (!res.ok) {
-      throw new Error(`Spotify-friends leaderboard fetch failed: ${res.status}`);
+      // Missing `spotify_user_id` column or bad filter — don't break the whole modal.
+      if (res.status === 400 || res.status === 406) {
+        return { trackId, difficulty, entries: [], fetchedAt: new Date() };
+      }
+      await throwIfRestNotOk(res, "Spotify friends leaderboard fetch");
     }
     const rows = (await res.json()) as Array<Record<string, unknown>>;
     const entries: LeaderboardEntry[] = rows.map((row, i) => ({
@@ -215,9 +241,7 @@ export class SupabaseLeaderboardClient implements LeaderboardClient {
       body: JSON.stringify(body),
     });
 
-    if (!res.ok) {
-      throw new Error(`Score submission failed: ${res.status}`);
-    }
+    await throwIfRestNotOk(res, "Score submission");
   }
 
   buildChallenge(

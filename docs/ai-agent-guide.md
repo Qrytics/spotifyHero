@@ -15,8 +15,8 @@ spotifyHero/
     audio-engine/     Spotify poller interface + drift correction utilities.
     chart-generator/  Note generation pipeline.  Deterministic first, ML optional.
     leaderboard-client/  Supabase REST + offline fallback.
-  services/
-    leaderboard/      (Future) serverless functions / Supabase migrations.
+  services/           Reserved for future edge helpers.
+  supabase/migrations/  Leaderboard DDL + RLS (apply in Dashboard SQL Editor).
   docs/               Reference docs.  Update when behaviour changes.
   scripts/setup/      Bootstrap helpers.
 ```

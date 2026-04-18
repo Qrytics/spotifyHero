@@ -63,12 +63,13 @@ spotifyHero/
 │   ├── chart-generator/  Hybrid note generation pipeline
 │   └── leaderboard-client/ Supabase REST + offline fallback
 ├── services/
-│   └── leaderboard/      (Future) serverless functions / Supabase migrations
+│   └── leaderboard/      (Future) optional edge functions / extras
 ├── docs/
 │   ├── architecture.md   System architecture and data flow diagram
 │   ├── gameplay-spec.md  Scoring, judgements, difficulty presets
 │   ├── integration-spec.md Spotify OAuth, Supabase schema, distribution
 │   └── ai-agent-guide.md How AI agents should navigate and edit this repo
+├── supabase/migrations/  SQL to create leaderboard table + RLS (run in Dashboard)
 ├── scripts/setup/        Bootstrap helpers
 ├── pnpm-workspace.yaml
 ├── package.json          Root scripts: lint, test, build
@@ -154,7 +155,7 @@ In manual mode, press **D F J K** to hit notes in lanes 0–3.
 
 ### Supabase (optional – for leaderboards)
 1. Create a free [Supabase](https://supabase.com) project.
-2. Run the SQL from `docs/integration-spec.md` to create the `leaderboard_entries` table.
+2. Open **SQL Editor**, paste the contents of `supabase/migrations/20260418120000_leaderboard_entries.sql`, and **Run** (creates `leaderboard_entries`, RLS, and grants). Details also appear in `docs/integration-spec.md`.
 3. Add your project URL and anon key to the app settings (see [Configuration](#configuration)).
 
 ---
@@ -234,8 +235,10 @@ Beat / onset stream (Web API or synthetic demo grid in overlay dev)
 │    when confidence is uniform    │
 │  • Stable-hash lane assignment   │
 │  • Min gap per lane (preset)     │
-│  • Merge taps → holds (chains +   │
-│    min hold duration per diff.)  │
+│  • Sustain assignment + ratio    │
+│    validation; then merge        │
+│    back-to-back same-lane holds  │
+│    into one long sustain         │
 └──────────────┬───────────────────┘
                │
                ▼
@@ -260,6 +263,7 @@ Beat / onset stream (Web API or synthetic demo grid in overlay dev)
 - Works fully **offline** — no server inference required for the baseline chart.
 - Deterministic fallback means charts are **never broken**.
 - Optional ML layer (when wired and confident enough) can improve variety without blocking play.
+- After sustain assignment, **`mergeContiguousSustainSeries`** collapses several short holds in a row on the same lane (where each tail meets the next head) into **one** long hold, matching how long presses should read on the highway.
 
 ---
 

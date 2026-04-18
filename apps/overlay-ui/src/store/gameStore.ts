@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { normalizeSupabaseProjectUrl } from "@spotifyhero/leaderboard-client";
 import type {
   AppSettings,
   Chart,
@@ -28,6 +29,12 @@ function loadPersistedSettings(): Record<string, unknown> | null {
   }
 }
 
+function finalizeSupabaseUrlInSettings(settings: AppSettings): AppSettings {
+  if (!settings.supabaseUrl) return settings;
+  const u = normalizeSupabaseProjectUrl(settings.supabaseUrl);
+  return u === settings.supabaseUrl ? settings : { ...settings, supabaseUrl: u };
+}
+
 function settingsFromEnv(): AppSettings {
   const persisted = loadPersistedSettings();
   const patch: Record<string, unknown> = persisted ? { ...persisted } : {};
@@ -35,7 +42,7 @@ function settingsFromEnv(): AppSettings {
   const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
   if (url) patch.supabaseUrl = url;
   if (key) patch.supabaseAnonKey = key;
-  return AppSettingsSchema.parse(patch);
+  return finalizeSupabaseUrlInSettings(AppSettingsSchema.parse(patch));
 }
 
 // ---------------------------------------------------------------------------
@@ -107,14 +114,16 @@ interface GameState {
 // Store
 // ---------------------------------------------------------------------------
 
+const initialSettings = settingsFromEnv();
+
 export const useGameStore = create<GameState>((set, get) => ({
   phase: "idle",
   trackLifecycle: "idle",
   countdownUntilMs: null,
   playback: null,
   chart: null,
-  settings: settingsFromEnv(),
-  lastPlayPhase: settingsFromEnv().autoplay ? "autoplay" : "manual",
+  settings: initialSettings,
+  lastPlayPhase: initialSettings.autoplay ? "autoplay" : "manual",
   sessionPlayMode: null,
   score: 0,
   combo: 0,
@@ -291,10 +300,12 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   updateSettings: (patch) =>
     set((state) => {
-      const settings = AppSettingsSchema.parse({
-        ...state.settings,
-        ...patch,
-      });
+      const settings = finalizeSupabaseUrlInSettings(
+        AppSettingsSchema.parse({
+          ...state.settings,
+          ...patch,
+        })
+      );
       try {
         localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
       } catch {
