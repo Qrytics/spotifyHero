@@ -12,7 +12,7 @@ function isTauriRuntime(): boolean {
 
 function createDefaultPoller(): SpotifyPoller {
   if (isTauriRuntime()) {
-    return new TauriSpotifyPoller(750);
+    return new TauriSpotifyPoller(400);
   }
   return new MockSpotifyPoller(
     {

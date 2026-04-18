@@ -95,7 +95,15 @@ export const useGameStore = create<GameState>((set, get) => ({
     const needsNewChart = trackChanged || !chartMatches;
 
     if (needsNewChart) {
-      set({ phase: "loading" });
+      set({
+        phase: "loading",
+        score: 0,
+        combo: 0,
+        maxCombo: 0,
+        accuracy: 1,
+        lastScoreEvent: null,
+        session: null,
+      });
       return;
     }
 

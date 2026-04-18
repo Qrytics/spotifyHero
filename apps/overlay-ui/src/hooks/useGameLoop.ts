@@ -21,6 +21,8 @@ export function useGameLoop(): void {
   const engineRef = useRef<ScoringEngine | null>(null);
   const windowManagerRef = useRef<NoteWindowManager | null>(null);
   const judgedRef = useRef<Set<number>>(new Set());
+  /** Detect Spotify seek / skip / rewind — large jumps invalidate hit bookkeeping. */
+  const lastPlaybackPosRef = useRef<number | null>(null);
   const rafRef = useRef<number>(0);
   const playModeRef = useRef(
     new PlayModeController(settings.autoplay ? "autoplay" : "manual")
@@ -32,6 +34,7 @@ export function useGameLoop(): void {
     engineRef.current = new ScoringEngine(chart);
     windowManagerRef.current = new NoteWindowManager(chart);
     judgedRef.current = new Set();
+    lastPlaybackPosRef.current = null;
     playModeRef.current.setMode(settings.autoplay ? "autoplay" : "manual");
     // settings.autoplay is intentionally read once here at chart load time;
     // live setting changes are synced by the phase-listener effect below.
@@ -61,6 +64,12 @@ export function useGameLoop(): void {
       const engine = engineRef.current;
       const windowManager = windowManagerRef.current;
       if (!engine || !windowManager) return;
+
+      const prev = lastPlaybackPosRef.current;
+      lastPlaybackPosRef.current = pos;
+      if (prev !== null && Math.abs(pos - prev) > 1500) {
+        judgedRef.current = new Set();
+      }
 
       // Autoplay hits – read actions from store directly to avoid stale closures
       if (playModeRef.current.isAutoplay()) {
