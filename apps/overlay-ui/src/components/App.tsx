@@ -5,6 +5,7 @@ import { HUD } from "./HUD.js";
 import { ResultsScreen } from "./ResultsScreen.js";
 import { IdleScreen } from "./IdleScreen.js";
 import { useSpotifySync } from "../hooks/useSpotifySync.js";
+import { useChartGeneration } from "../hooks/useChartGeneration.js";
 import { useGameLoop } from "../hooks/useGameLoop.js";
 import { useKeybinds } from "../hooks/useKeybinds.js";
 
@@ -13,6 +14,7 @@ export function App(): React.ReactElement {
 
   // Core game hooks
   useSpotifySync();
+  useChartGeneration();
   useGameLoop();
   useKeybinds();
 

@@ -112,6 +112,8 @@ Open **http://localhost:1420** in your browser.
 
 You will see the idle screen. Because the mock poller starts in "not playing" state, open your browser console and run:
 
+> Use **two** underscores: `window.__mockPoller` (not `_mockPoller`).
+
 ```js
 // Simulate Spotify starting playback with a test track
 window.__mockPoller?.simulatePlay({

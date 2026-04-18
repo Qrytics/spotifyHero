@@ -1,5 +1,5 @@
-import React, { useRef, useEffect } from "react";
-import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
+import React, { useRef, useEffect, useState } from "react";
+import { Application, Graphics, Text, TextStyle } from "pixi.js";
 import { useGameStore } from "../store/gameStore.js";
 
 const LANE_COLORS = [0xe040fb, 0x1db954, 0xff9800, 0x2196f3];
@@ -18,44 +18,78 @@ export function NoteHighway(): React.ReactElement {
   const canvasRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
   const chart = useGameStore((s) => s.chart);
-  const phase = useGameStore((s) => s.phase);
+  /** False until `Application.init()` completes — avoids destroying before plugins (resize) exist (React Strict Mode). */
+  const [pixiReady, setPixiReady] = useState(false);
 
-  // Initialise PixiJS once
+  // Initialise PixiJS once — async-safe for Strict Mode double mount/unmount.
   useEffect(() => {
-    if (!canvasRef.current) return;
+    const container = canvasRef.current;
+    if (!container) return;
 
+    let disposed = false;
+    let tornDown = false;
     const app = new Application();
-    appRef.current = app;
 
-    (async () => {
-      await app.init({
-        resizeTo: canvasRef.current!,
-        background: 0x0d0d0f,
-        antialias: true,
-      });
-      canvasRef.current?.appendChild(app.canvas);
+    const safeDestroy = () => {
+      if (tornDown) return;
+      tornDown = true;
+      appRef.current = null;
+      setPixiReady(false);
+      try {
+        if (app.renderer) {
+          app.canvas?.remove();
+          app.destroy(true, true);
+        }
+      } catch {
+        /* Pixi teardown may throw if called twice; ignore */
+      }
+    };
+
+    void (async () => {
+      try {
+        await app.init({
+          resizeTo: container,
+          background: 0x0d0d0f,
+          antialias: true,
+        });
+      } catch {
+        return;
+      }
+      if (disposed) {
+        safeDestroy();
+        return;
+      }
+      container.appendChild(app.canvas);
+      appRef.current = app;
+      setPixiReady(true);
     })();
 
     return () => {
-      app.destroy(true);
-      appRef.current = null;
+      disposed = true;
+      if (appRef.current === app) {
+        safeDestroy();
+      }
+      // If init is still in flight, the async continuation calls safeDestroy when disposed.
     };
   }, []);
 
-  // Render frame when playback position changes
+  // Render when chart or playback updates — always read `appRef.current` (never a stale Application).
   useEffect(() => {
-    const app = appRef.current;
-    if (!app || !chart) return;
+    if (!chart || !pixiReady) return;
 
-    const unsubscribe = useGameStore.subscribe((state) => {
+    const paint = () => {
+      const app = appRef.current;
+      if (!app?.renderer) return;
+      const state = useGameStore.getState();
       const pos = state.playback?.positionMs ?? 0;
       if (state.phase !== "autoplay" && state.phase !== "manual") return;
 
       renderFrame(app, chart.notes, pos, app.screen.width, app.screen.height);
-    });
+    };
 
-    return unsubscribe;
-  }, [chart]);
+    paint();
+    return useGameStore.subscribe(paint);
+  }, [chart, pixiReady]);
 
   return (
     <div
@@ -76,6 +110,8 @@ function renderFrame(
   width: number,
   height: number
 ): void {
+  if (!app.stage) return;
+
   // Clear stage
   app.stage.removeChildren();
 

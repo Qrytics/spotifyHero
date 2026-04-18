@@ -3,6 +3,8 @@ import { useGameStore } from "../store/gameStore.js";
 import { DriftCorrector, MockSpotifyPoller } from "@spotifyhero/audio-engine";
 import type { SpotifyPoller } from "@spotifyhero/audio-engine";
 
+type WindowWithMockPoller = Window & { __mockPoller?: MockSpotifyPoller };
+
 /**
  * useSpotifySync
  *
@@ -41,8 +43,20 @@ export function useSpotifySync(poller?: SpotifyPoller): void {
       useGameStore.getState().setPlayback({ ...state, positionMs: correctedPos });
     });
 
+    if (p instanceof MockSpotifyPoller) {
+      (window as WindowWithMockPoller).__mockPoller = p;
+    }
+
     p.start();
-    return () => p.stop();
+    return () => {
+      if (p instanceof MockSpotifyPoller) {
+        const w = window as WindowWithMockPoller;
+        if (w.__mockPoller === p) {
+          delete w.__mockPoller;
+        }
+      }
+      p.stop();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally empty: poller identity is stable after mount
 }
