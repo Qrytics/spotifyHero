@@ -9,6 +9,15 @@ import type {
 import { AppSettingsSchema } from "@spotifyhero/shared-types";
 import type { PlayMode } from "@spotifyhero/gameplay-core";
 
+function settingsFromEnv(): AppSettings {
+  const patch: Partial<AppSettings> = {};
+  const url = import.meta.env.VITE_SUPABASE_URL;
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+  if (url) patch.supabaseUrl = url;
+  if (key) patch.supabaseAnonKey = key;
+  return AppSettingsSchema.parse(patch);
+}
+
 // ---------------------------------------------------------------------------
 // Game phase
 // ---------------------------------------------------------------------------
@@ -56,7 +65,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   phase: "idle",
   playback: null,
   chart: null,
-  settings: AppSettingsSchema.parse({}),
+  settings: settingsFromEnv(),
   score: 0,
   combo: 0,
   maxCombo: 0,
