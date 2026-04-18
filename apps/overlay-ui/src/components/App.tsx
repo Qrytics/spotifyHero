@@ -45,6 +45,7 @@ export function App(): React.ReactElement {
       useGameStore.getState().updateSettings({
         noteScrollSpeed: tauriSettings.noteScrollSpeed,
         playbackTimingOffsetMs: tauriSettings.playbackTimingOffsetMs,
+        spotifyClientId: tauriSettings.spotifyClientId ?? undefined,
       });
     })();
   }, []);

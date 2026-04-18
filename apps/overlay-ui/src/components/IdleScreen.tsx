@@ -199,8 +199,11 @@ export function IdleScreen({ onOpenSettings }: IdleProps): React.ReactElement {
               Spotify API 403
             </div>
             <p style={{ margin: "0 0 6px 0" }}>
-              Dev dashboard: add your Spotify email under User Management, then Disconnect and
-              connect here.
+              The shared app is in Spotify &quot;development&quot; mode (max 5 allowlisted users).
+              Either ask the developer to add your email under User Management, or open Settings and
+              paste your own Spotify app Client ID (free; add redirect{" "}
+              <code style={{ fontSize: "8px" }}>http://127.0.0.1:8888/callback</code>
+              ), then Disconnect and Connect again.
             </p>
             <a
               href="https://developer.spotify.com/dashboard"

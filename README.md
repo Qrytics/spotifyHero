@@ -147,8 +147,8 @@ In manual mode, press **D F J K** to hit notes in lanes 0–3.
 ### Spotify (no `.env` required)
 The **Spotify Client ID** for this project is built into the desktop app (`apps/desktop/src-tauri/src/spotify/config.rs`). It is a public identifier (PKCE); you do **not** need to create your own Spotify app to clone and play.
 
-1. In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), the **spotifyHero** app that uses this client ID must list redirect URI **`http://127.0.0.1:8888/callback`** (exact match). That is a one-time setup for whoever maintains the app; contributors and friends do not paste credentials.
-2. **Optional:** To use your own Spotify app instead, create `apps/desktop/src-tauri/.env` (gitignored) with `SPOTIFY_CLIENT_ID=...` and set the same redirect URI on that app.
+1. In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), the **spotifyHero** app that uses this client ID must list redirect URI **`http://127.0.0.1:8888/callback`** (exact match). Spotify **development mode** only allows a small allowlisted set of users per app; for wider distribution you either add testers in **User Management** or (recommended for players) have each user create their own free Spotify app and enter its Client ID under **Settings** in the app (same redirect URI). **Extended quota** (unlimited users, no allowlist) requires Spotify’s partner process, not something the code can toggle.
+2. **Optional:** Override the default Client ID with `apps/desktop/src-tauri/.env` (gitignored): `SPOTIFY_CLIENT_ID=...` (dev/build), or use the in-app **Settings** field (stored per machine).
 
 ### Supabase (optional – for leaderboards)
 1. Create a free [Supabase](https://supabase.com) project.

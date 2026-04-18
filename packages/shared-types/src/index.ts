@@ -208,6 +208,14 @@ export const AppSettingsSchema = z.object({
     "k",
   ]),
   playerName: z.string().max(32).optional(),
+  /**
+   * Optional Spotify Developer app Client ID (32 hex). Use your own app to avoid the shared
+   * dev-mode allowlist; set redirect URI `http://127.0.0.1:8888/callback` on that app.
+   */
+  spotifyClientId: z
+    .union([z.literal(""), z.string().regex(/^[a-fA-F0-9]{32}$/)])
+    .optional()
+    .transform((v) => (v === "" ? undefined : v)),
   supabaseUrl: z.string().url().optional(),
   supabaseAnonKey: z.string().optional(),
 });

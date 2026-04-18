@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 type TauriAppSettingsPayload = {
   noteScrollSpeed: number;
   playbackTimingOffsetMs: number;
+  spotifyClientId?: string | null;
 };
 
 function isTauriRuntime(): boolean {
@@ -26,5 +27,11 @@ export async function loadTauriAppSettings(): Promise<TauriAppSettingsPayload | 
 
 export async function saveTauriAppSettings(payload: TauriAppSettingsPayload): Promise<void> {
   if (!isTauriRuntime()) return;
-  await invoke("save_app_settings", { payload });
+  await invoke("save_app_settings", {
+    payload: {
+      noteScrollSpeed: payload.noteScrollSpeed,
+      playbackTimingOffsetMs: payload.playbackTimingOffsetMs,
+      spotifyClientId: payload.spotifyClientId ?? null,
+    },
+  });
 }

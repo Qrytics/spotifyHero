@@ -1,7 +1,7 @@
 use crate::spotify::{
     audio_features::ensure_track_tempo, clear_tokens, ensure_access_token,
     fetch_current_playback, fetch_current_user, fetch_followed_user_ids, idle_playback,
-    load_store, run_login, spotify_client_id, PlaybackStatePayload, SpotifyUserPayload,
+    load_store, resolve_spotify_client_id, run_login, PlaybackStatePayload, SpotifyUserPayload,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ async fn spotify_playback_command(
     app: &tauri::AppHandle,
     endpoint: &str,
 ) -> Result<(), String> {
-    let client_id = spotify_client_id();
+    let client_id = resolve_spotify_client_id(app);
     let http = http_client();
     let Some(access) = ensure_access_token(app, http, &client_id).await? else {
         return Ok(());
@@ -101,6 +101,9 @@ pub struct AppSettingsPayload {
     pub note_scroll_speed: f64,
     #[serde(default)]
     pub playback_timing_offset_ms: i32,
+    /// Override Spotify app Client ID (32 hex chars). Empty = use built-in / env default.
+    #[serde(default)]
+    pub spotify_client_id: Option<String>,
 }
 
 #[command]
@@ -116,7 +119,7 @@ pub async fn spotify_connection_status(
 /// Poll Spotify Web API for the active player (Premium + active device recommended).
 #[command]
 pub async fn get_playback_state(app: tauri::AppHandle) -> Result<PlaybackStatePayload, String> {
-    let client_id = spotify_client_id();
+    let client_id = resolve_spotify_client_id(&app);
 
     let http = http_client();
     let Some(access) = ensure_access_token(&app, http, &client_id).await? else {
@@ -145,7 +148,7 @@ pub async fn get_playback_state(app: tauri::AppHandle) -> Result<PlaybackStatePa
 pub async fn get_spotify_user_profile(
     app: tauri::AppHandle,
 ) -> Result<Option<SpotifyUserPayload>, String> {
-    let client_id = spotify_client_id();
+    let client_id = resolve_spotify_client_id(&app);
     let http = http_client();
     fetch_current_user(&app, http, &client_id).await
 }
@@ -153,7 +156,7 @@ pub async fn get_spotify_user_profile(
 /// Spotify user IDs you follow (`user-follow-read`). Used for friend leaderboards.
 #[command]
 pub async fn get_spotify_followed_user_ids(app: tauri::AppHandle) -> Result<Vec<String>, String> {
-    let client_id = spotify_client_id();
+    let client_id = resolve_spotify_client_id(&app);
     let http = http_client();
     fetch_followed_user_ids(&app, http, &client_id).await
 }
@@ -213,9 +216,14 @@ pub async fn load_app_settings(app: tauri::AppHandle) -> Result<AppSettingsPaylo
         .get("playback_timing_offset_ms")
         .and_then(|v| v.as_i64().map(|n| n.clamp(-500, 500) as i32))
         .unwrap_or(0);
+    let spotify_client_id = store
+        .get("spotify_client_id")
+        .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty());
     Ok(AppSettingsPayload {
         note_scroll_speed,
         playback_timing_offset_ms,
+        spotify_client_id,
     })
 }
 
@@ -227,10 +235,32 @@ pub async fn save_app_settings(
     let store = tauri_plugin_store::StoreBuilder::new(&app, "settings.json")
         .build()
         .map_err(|e| e.to_string())?;
+
+    let prev_cid = store
+        .get("spotify_client_id")
+        .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
+        .filter(|s| !s.is_empty());
+    let next_cid = payload
+        .spotify_client_id
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    if prev_cid != next_cid {
+        let _ = clear_tokens(store.as_ref());
+    }
+
     store.set("note_scroll_speed", serde_json::json!(payload.note_scroll_speed));
     store.set(
         "playback_timing_offset_ms",
         serde_json::json!(payload.playback_timing_offset_ms),
     );
+    match &next_cid {
+        Some(s) => store.set("spotify_client_id", serde_json::json!(s)),
+        None => {
+            store.delete("spotify_client_id");
+        }
+    }
     store.save().map_err(|e| e.to_string())
 }

@@ -389,6 +389,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       void saveTauriAppSettings({
         noteScrollSpeed: settings.noteScrollSpeed,
         playbackTimingOffsetMs: settings.playbackTimingOffsetMs,
+        spotifyClientId: settings.spotifyClientId ?? null,
       });
       return {
         settings,

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type { AppSettings, Difficulty } from "@spotifyhero/shared-types";
+import { AppSettingsSchema } from "@spotifyhero/shared-types";
 import { useGameStore } from "../store/gameStore.js";
 import { formatKeybindLabel } from "../lib/keybindDisplay.js";
 
@@ -20,9 +21,16 @@ export function SettingsPanel({
   const updateSettings = useGameStore((s) => s.updateSettings);
 
   const [draft, setDraft] = useState<AppSettings>(settings);
+  /** Free-typed until Save; validated with AppSettingsSchema (32 hex or empty). */
+  const [spotifyClientIdInput, setSpotifyClientIdInput] = useState("");
+  const [spotifyClientIdError, setSpotifyClientIdError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (open) setDraft(settings);
+    if (open) {
+      setDraft(settings);
+      setSpotifyClientIdInput(settings.spotifyClientId ?? "");
+      setSpotifyClientIdError(null);
+    }
   }, [open, settings]);
 
   if (!open) return null;
@@ -47,7 +55,18 @@ export function SettingsPanel({
   };
 
   const save = () => {
-    updateSettings(draft);
+    const cid = spotifyClientIdInput.trim();
+    const merged = { ...draft, spotifyClientId: cid === "" ? ("" as const) : cid };
+    const parsed = AppSettingsSchema.safeParse(merged);
+    if (!parsed.success) {
+      const msg = parsed.error.flatten().fieldErrors.spotifyClientId?.[0];
+      setSpotifyClientIdError(
+        msg ?? "Spotify Client ID must be empty or exactly 32 hex characters."
+      );
+      return;
+    }
+    setSpotifyClientIdError(null);
+    updateSettings(parsed.data);
     onClose();
   };
   const speedFillPct = `${((draft.noteScrollSpeed - 0.45) / (5 - 0.45)) * 100}%`;
@@ -143,6 +162,41 @@ export function SettingsPanel({
           <strong style={{ color: "var(--text)" }}>{formatKeybindLabel(draft.playKeybind)}</strong>{" "}
           is optional to toggle modes anytime.
         </p>
+
+        <div>
+          <label style={labelStyle}>Spotify Client ID (optional)</label>
+          <input
+            style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", fontSize: "10px" }}
+            value={spotifyClientIdInput}
+            onChange={(e) => {
+              setSpotifyClientIdInput(e.target.value);
+              setSpotifyClientIdError(null);
+            }}
+            placeholder="Leave empty for default app"
+            autoComplete="off"
+            spellCheck={false}
+            aria-invalid={Boolean(spotifyClientIdError)}
+          />
+          <span style={{ fontSize: "8px", color: "#666", marginTop: "2px", display: "block" }}>
+            Use your own{" "}
+            <a
+              href="https://developer.spotify.com/dashboard"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "var(--accent)" }}
+            >
+              Spotify app
+            </a>{" "}
+            so you do not need to be on the developer allowlist. Redirect URI must be exactly{" "}
+            <code style={{ color: "var(--accent)", fontSize: "8px" }}>http://127.0.0.1:8888/callback</code>
+            . Changing this clears the current Spotify link — connect again.
+          </span>
+          {spotifyClientIdError && (
+            <span style={{ fontSize: "8px", color: "#f66", marginTop: "4px", display: "block" }}>
+              {spotifyClientIdError}
+            </span>
+          )}
+        </div>
 
         <div>
           <label style={labelStyle}>Play mode toggle key (optional)</label>
