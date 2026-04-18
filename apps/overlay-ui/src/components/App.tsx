@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useState } from "react";
 import { useGameStore } from "../store/gameStore.js";
 import { NoteHighway } from "./NoteHighway.js";
 import { HUD } from "./HUD.js";
+import { PlayBottomBar } from "./PlayBottomBar.js";
 import { ResultsScreen } from "./ResultsScreen.js";
 import { IdleScreen } from "./IdleScreen.js";
 import { useSpotifySync } from "../hooks/useSpotifySync.js";
@@ -9,9 +10,11 @@ import { useChartGeneration } from "../hooks/useChartGeneration.js";
 import { useGameLoop } from "../hooks/useGameLoop.js";
 import { useKeybinds } from "../hooks/useKeybinds.js";
 import { SpotifyDiagnosticsPanel } from "./SpotifyDiagnosticsPanel.js";
+import { SettingsPanel } from "./SettingsPanel.js";
 
 export function App(): React.ReactElement {
   const phase = useGameStore((s) => s.phase);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Core game hooks
   useSpotifySync();
@@ -32,10 +35,20 @@ export function App(): React.ReactElement {
       }}
     >
       {(phase === "autoplay" || phase === "manual" || phase === "paused") && (
-        <>
-          <HUD />
-          <NoteHighway />
-        </>
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+          }}
+        >
+          <HUD onOpenSettings={() => setSettingsOpen(true)} />
+          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+            <NoteHighway />
+          </div>
+          <PlayBottomBar />
+        </div>
       )}
 
       {phase === "loading" && (
@@ -54,7 +67,10 @@ export function App(): React.ReactElement {
       )}
 
       {phase === "results" && <ResultsScreen />}
-      {phase === "idle" && <IdleScreen />}
+      {phase === "idle" && (
+        <IdleScreen onOpenSettings={() => setSettingsOpen(true)} />
+      )}
+      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <SpotifyDiagnosticsPanel />
     </div>
   );

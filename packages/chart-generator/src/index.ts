@@ -23,13 +23,91 @@ const LANE_COUNTS: Record<Difficulty, number> = {
   expert: 4,
 };
 
-// Max notes per beat interval per difficulty (density filter)
-const DENSITY_MULTIPLIER: Record<Difficulty, number> = {
-  easy: 0.3,
-  medium: 0.6,
-  hard: 0.85,
-  expert: 1.0,
+/**
+ * Difficulty presets: fewer / wider-spaced notes on Easy; Expert is dense with tight gaps.
+ * Hold windows scale so Easy gets longer sustains; Expert gets punchy bursts.
+ */
+export const DIFFICULTY_PARAMS: Record<
+  Difficulty,
+  {
+    densityMultiplier: number;
+    minGapMs: number;
+    holdGapMinMs: number;
+    holdGapMaxMs: number;
+  }
+> = {
+  easy: {
+    densityMultiplier: 0.26,
+    minGapMs: 148,
+    holdGapMinMs: 320,
+    holdGapMaxMs: 2400,
+  },
+  medium: {
+    densityMultiplier: 0.52,
+    minGapMs: 105,
+    holdGapMinMs: 260,
+    holdGapMaxMs: 1900,
+  },
+  hard: {
+    densityMultiplier: 0.78,
+    minGapMs: 88,
+    holdGapMinMs: 220,
+    holdGapMaxMs: 1750,
+  },
+  expert: {
+    densityMultiplier: 1.0,
+    minGapMs: 72,
+    holdGapMinMs: 200,
+    holdGapMaxMs: 1550,
+  },
 };
+
+/**
+ * Merge consecutive taps **per lane** (sorted by time) into sustained notes.
+ * Global-time adjacency almost never shares a lane because lanes rotate — this pass is required.
+ */
+export function mergeAdjacentHoldNotes(
+  notes: Note[],
+  holdGapMinMs = 220,
+  holdGapMaxMs = 1600
+): Note[] {
+  const maxLane = notes.reduce((m, n) => Math.max(m, n.lane), 0);
+  const buckets: Note[][] = Array.from({ length: maxLane + 1 }, () => []);
+
+  for (const n of notes) {
+    const lane = n.lane;
+    if (lane >= 0 && lane <= buckets.length - 1) {
+      buckets[lane]!.push(n);
+    }
+  }
+
+  const merged: Note[] = [];
+  for (let lane = 0; lane < buckets.length; lane++) {
+    const laneNotes = buckets[lane]!.sort((a, b) => a.timeMs - b.timeMs);
+    let i = 0;
+    while (i < laneNotes.length) {
+      const a = laneNotes[i]!;
+      const b = laneNotes[i + 1];
+      if (
+        b &&
+        a.durationMs === 0 &&
+        b.durationMs === 0
+      ) {
+        const gap = b.timeMs - a.timeMs;
+        if (gap >= holdGapMinMs && gap <= holdGapMaxMs) {
+          merged.push({ timeMs: a.timeMs, lane, durationMs: gap });
+          i += 2;
+          continue;
+        }
+      }
+      merged.push(a);
+      i += 1;
+    }
+  }
+
+  merged.sort((a, b) => a.timeMs - b.timeMs);
+  return merged;
+}
 
 // ---------------------------------------------------------------------------
 // Step 1 – Deterministic signal-based chart generation
@@ -51,9 +129,11 @@ export function generateDeterministicChart(
   bpm: number,
   options: ChartGeneratorOptions
 ): Chart {
-  const { difficulty, minGapMs = 80 } = options;
+  const { difficulty } = options;
+  const preset = DIFFICULTY_PARAMS[difficulty];
+  const minGapMs = options.minGapMs ?? preset.minGapMs;
   const laneCount = LANE_COUNTS[difficulty];
-  const densityMultiplier = DENSITY_MULTIPLIER[difficulty];
+  const densityMultiplier = preset.densityMultiplier;
 
   // Collect onsets sorted by time
   const onsets = beatEvents
@@ -77,8 +157,16 @@ export function generateDeterministicChart(
   const notes: Note[] = [];
   let laneIdx = 0;
 
+  const difficultyStride =
+    difficulty === "easy"
+      ? 3
+      : difficulty === "medium"
+        ? 2
+        : difficulty === "hard"
+          ? 1
+          : 1;
+
   for (const event of filtered) {
-    // Rotate lane; skip if min-gap not met on current lane
     let triesLeft = laneCount;
     while (triesLeft-- > 0) {
       const lane = laneIdx % laneCount;
@@ -90,15 +178,21 @@ export function generateDeterministicChart(
       }
       laneIdx += 1;
     }
-    laneIdx = (laneIdx + 1) % laneCount;
+    laneIdx = (laneIdx + difficultyStride) % laneCount;
   }
+
+  const withHolds = mergeAdjacentHoldNotes(
+    notes,
+    preset.holdGapMinMs,
+    preset.holdGapMaxMs
+  );
 
   return {
     trackId,
     difficulty,
-    notes,
+    notes: withHolds,
     bpm,
-    generatorVersion: "deterministic-1.0",
+    generatorVersion: "deterministic-1.1",
     generatedAt: new Date(),
   };
 }

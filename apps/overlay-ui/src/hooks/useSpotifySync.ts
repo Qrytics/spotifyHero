@@ -3,6 +3,7 @@ import { useGameStore } from "../store/gameStore.js";
 import { DriftCorrector, MockSpotifyPoller } from "@spotifyhero/audio-engine";
 import type { SpotifyPoller } from "@spotifyhero/audio-engine";
 import { TauriSpotifyPoller } from "../lib/TauriSpotifyPoller.js";
+import { playbackClock } from "../lib/playbackClock.js";
 
 type WindowWithMockPoller = Window & { __mockPoller?: MockSpotifyPoller };
 
@@ -12,7 +13,7 @@ function isTauriRuntime(): boolean {
 
 function createDefaultPoller(): SpotifyPoller {
   if (isTauriRuntime()) {
-    return new TauriSpotifyPoller(400);
+    return new TauriSpotifyPoller(500);
   }
   return new MockSpotifyPoller(
     {
@@ -47,7 +48,7 @@ export function useSpotifySync(poller?: SpotifyPoller): void {
     p.onStateChange((state) => {
       correctorRef.current.update(state.positionMs);
       const correctedPos = correctorRef.current.correct(state.positionMs);
-      // Always read the latest action from the store to avoid stale closures
+      playbackClock.sync(correctedPos, state.isPlaying, state.trackId);
       useGameStore.getState().setPlayback({ ...state, positionMs: correctedPos });
     });
 

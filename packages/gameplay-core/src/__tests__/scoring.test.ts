@@ -114,6 +114,42 @@ describe("ScoringEngine", () => {
     const event = bigEngine.onNoteHit(10, 11000);
     expect(event!.pointsAwarded).toBe(1000 * 2); // perfect × ×2
   });
+
+  it("hold notes score sustain ticks without inflating perfect accuracy count", () => {
+    const holdChart: Chart = {
+      trackId: "hold-test",
+      difficulty: "medium",
+      bpm: 120,
+      generatorVersion: "test",
+      generatedAt: new Date(),
+      notes: [{ timeMs: 1000, lane: 0, durationMs: 600 }],
+    };
+    const eng = new ScoringEngine(holdChart);
+    eng.onNoteHit(0, 1000);
+    const tickEvents = eng.advanceHolds(1000 + 600, [true, false, false, false]);
+    expect(tickEvents.length).toBeGreaterThan(0);
+    const session = eng.finalize();
+    expect(session.judgements.perfect).toBe(1);
+    expect(session.judgements.miss).toBe(0);
+    expect(session.score).toBeGreaterThan(1000);
+  });
+
+  it("fails an active hold when the lane is released early", () => {
+    const holdChart: Chart = {
+      trackId: "hold-test",
+      difficulty: "medium",
+      bpm: 120,
+      generatorVersion: "test",
+      generatedAt: new Date(),
+      notes: [{ timeMs: 1000, lane: 0, durationMs: 800 }],
+    };
+    const eng = new ScoringEngine(holdChart);
+    eng.onNoteHit(0, 1000);
+    const mid = 1000 + 400;
+    const fail = eng.advanceHolds(mid, [false, false, false, false]);
+    expect(fail.some((e) => e.judgement === "miss")).toBe(true);
+    expect(eng.isResolved(0)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

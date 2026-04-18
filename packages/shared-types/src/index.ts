@@ -75,6 +75,8 @@ export const ScoreEventSchema = z.object({
   deltaMs: z.number().describe("Actual hit time minus note time"),
   pointsAwarded: z.number().int().nonnegative(),
   combo: z.number().int().nonnegative(),
+  /** Tap / hold head / hold fail — counted in accuracy tallies; sustain ticks omit. */
+  countsTowardAccuracy: z.boolean().optional(),
 });
 export type ScoreEvent = z.infer<typeof ScoreEventSchema>;
 
@@ -168,7 +170,8 @@ export type WindowSettings = z.infer<typeof WindowSettingsSchema>;
 export const AppSettingsSchema = z.object({
   window: WindowSettingsSchema.default({}),
   difficulty: DifficultySchema.default("medium"),
-  autoplay: z.boolean().default(true),
+  /** When true, new charts start in autoplay; press play key to switch to manual. */
+  autoplay: z.boolean().default(false),
   playKeybind: z.string().default("Space"),
   laneKeys: z.tuple([z.string(), z.string(), z.string(), z.string()]).default([
     "d",

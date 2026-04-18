@@ -119,7 +119,7 @@ describe("HybridChartGenerator", () => {
     const beats = makeBeatEvents(20, 500);
     const chart = await gen.generate("t", beats, 120, { difficulty: "medium" });
     // PassthroughMLRefiner always returns confidence 0, so deterministic is used
-    expect(chart.generatorVersion).toBe("deterministic-1.0");
+    expect(chart.generatorVersion).toBe("deterministic-1.1");
   });
 
   it("returns a valid chart shape", async () => {

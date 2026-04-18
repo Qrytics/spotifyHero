@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useGameStore } from "../store/gameStore.js";
 import { invoke } from "@tauri-apps/api/core";
 import type { SpotifyPollDiagnostics } from "../lib/spotifyDiagnostics.js";
+import { formatKeybindLabel } from "../lib/keybindDisplay.js";
 
 type ConnectionStatus = { connected: boolean };
 
@@ -24,7 +25,11 @@ function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-export function IdleScreen(): React.ReactElement {
+type IdleProps = {
+  onOpenSettings?: () => void;
+};
+
+export function IdleScreen({ onOpenSettings }: IdleProps): React.ReactElement {
   const settings = useGameStore((s) => s.settings);
   const [connected, setConnected] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -134,11 +139,12 @@ export function IdleScreen(): React.ReactElement {
           </>
         )}
         <br />
-        Press{" "}
+        During a song:{" "}
         <kbd style={{ background: "#222", padding: "1px 4px", borderRadius: "3px" }}>
-          {settings.playKeybind}
+          {formatKeybindLabel(settings.playKeybind)}
         </kbd>{" "}
-        to toggle manual play.
+        toggles manual ↔ autoplay. Lanes:{" "}
+        {settings.laneKeys.map((k) => formatKeybindLabel(k)).join(", ")}.
         <br />
         <span style={{ opacity: 0.75 }}>
           Stuck? Press{" "}
@@ -188,43 +194,70 @@ export function IdleScreen(): React.ReactElement {
       )}
 
       {tauri && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginTop: "6px" }}>
-          {!connected ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void onConnect()}
-              style={{
-                padding: "8px 14px",
-                fontSize: "11px",
-                fontWeight: 600,
-                borderRadius: "6px",
-                border: "none",
-                cursor: busy ? "wait" : "pointer",
-                background: "var(--accent)",
-                color: "#0d0d0f",
-              }}
-            >
-              {busy ? "Starting…" : "Connect Spotify"}
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void onDisconnect()}
-              style={{
-                padding: "6px 12px",
-                fontSize: "10px",
-                borderRadius: "6px",
-                border: "1px solid #333",
-                cursor: busy ? "wait" : "pointer",
-                background: "transparent",
-                color: "var(--text-muted)",
-              }}
-            >
-              {busy ? "…" : "Disconnect Spotify"}
-            </button>
-          )}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+            marginTop: "6px",
+            alignItems: "center",
+          }}
+        >
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", justifyContent: "center" }}>
+            {onOpenSettings && (
+              <button
+                type="button"
+                onClick={onOpenSettings}
+                style={{
+                  padding: "6px 12px",
+                  fontSize: "10px",
+                  borderRadius: "6px",
+                  border: "1px solid #333",
+                  cursor: "pointer",
+                  background: "#222",
+                  color: "var(--text)",
+                }}
+              >
+                ⚙ Settings
+              </button>
+            )}
+            {!connected ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void onConnect()}
+                style={{
+                  padding: "8px 14px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  borderRadius: "6px",
+                  border: "none",
+                  cursor: busy ? "wait" : "pointer",
+                  background: "var(--accent)",
+                  color: "#0d0d0f",
+                }}
+              >
+                {busy ? "Starting…" : "Connect Spotify"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void onDisconnect()}
+                style={{
+                  padding: "6px 12px",
+                  fontSize: "10px",
+                  borderRadius: "6px",
+                  border: "1px solid #333",
+                  cursor: busy ? "wait" : "pointer",
+                  background: "transparent",
+                  color: "var(--text-muted)",
+                }}
+              >
+                {busy ? "…" : "Disconnect Spotify"}
+              </button>
+            )}
+          </div>
         </div>
       )}
 

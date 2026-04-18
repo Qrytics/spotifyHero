@@ -17,7 +17,7 @@ export class TauriSpotifyPoller implements SpotifyPoller {
   private readonly pollIntervalMs: number;
   private state: PlaybackState | null = null;
 
-  constructor(pollIntervalMs = 400) {
+  constructor(pollIntervalMs = 500) {
     this.pollIntervalMs = pollIntervalMs;
   }
 

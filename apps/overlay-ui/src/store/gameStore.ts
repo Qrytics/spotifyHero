@@ -9,8 +9,21 @@ import type {
 import { AppSettingsSchema } from "@spotifyhero/shared-types";
 import type { PlayMode } from "@spotifyhero/gameplay-core";
 
+const SETTINGS_STORAGE_KEY = "spotifyHero_settings_v1";
+
+function loadPersistedSettings(): Record<string, unknown> | null {
+  try {
+    const raw = localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 function settingsFromEnv(): AppSettings {
-  const patch: Partial<AppSettings> = {};
+  const persisted = loadPersistedSettings();
+  const patch: Record<string, unknown> = persisted ? { ...persisted } : {};
   const url = import.meta.env.VITE_SUPABASE_URL;
   const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
   if (url) patch.supabaseUrl = url;
@@ -39,6 +52,16 @@ interface GameState {
   playback: PlaybackState | null;
   chart: Chart | null;
   settings: AppSettings;
+  /**
+   * Last interactive autoplay ↔ manual choice (survives `paused`; used when a new
+   * chart loads so we don't revert to settings.autoplay alone).
+   */
+  lastPlayPhase: "autoplay" | "manual";
+  /**
+   * When switching tracks while playing/paused, prefer this for the next chart phase.
+   * Consumed by `setChart`; if null, falls back to `settings.autoplay`.
+   */
+  sessionPlayMode: "autoplay" | "manual" | null;
   score: number;
   combo: number;
   maxCombo: number;
@@ -66,6 +89,8 @@ export const useGameStore = create<GameState>((set, get) => ({
   playback: null,
   chart: null,
   settings: settingsFromEnv(),
+  lastPlayPhase: settingsFromEnv().autoplay ? "autoplay" : "manual",
+  sessionPlayMode: null,
   score: 0,
   combo: 0,
   maxCombo: 0,
@@ -95,6 +120,16 @@ export const useGameStore = create<GameState>((set, get) => ({
     const needsNewChart = trackChanged || !chartMatches;
 
     if (needsNewChart) {
+      const st = get();
+      let inherit: "autoplay" | "manual" | null = null;
+      if (st.phase === "autoplay" || st.phase === "manual") {
+        inherit = st.phase;
+      } else if (st.phase === "paused") {
+        inherit = st.lastPlayPhase;
+      } else if (st.phase === "results") {
+        inherit = st.lastPlayPhase;
+      }
+
       set({
         phase: "loading",
         score: 0,
@@ -103,6 +138,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         accuracy: 1,
         lastScoreEvent: null,
         session: null,
+        sessionPlayMode: inherit,
       });
       return;
     }
@@ -112,26 +148,46 @@ export const useGameStore = create<GameState>((set, get) => ({
     const playPhase: GamePhase = preferAutoplay ? "autoplay" : "manual";
 
     if (phaseNow === "paused") {
-      set({ phase: playPhase });
+      set({
+        phase: playPhase,
+        lastPlayPhase:
+          playPhase === "autoplay" || playPhase === "manual"
+            ? playPhase
+            : get().lastPlayPhase,
+      });
     } else if (phaseNow === "idle") {
-      set({ phase: playPhase });
+      set({
+        phase: playPhase,
+        lastPlayPhase:
+          playPhase === "autoplay" || playPhase === "manual"
+            ? playPhase
+            : get().lastPlayPhase,
+      });
     }
   },
 
   setChart: (chart) =>
-    set({ chart, phase: get().settings.autoplay ? "autoplay" : "manual" }),
+    set((state) => {
+      const phase: GamePhase =
+        state.sessionPlayMode ??
+        (state.settings.autoplay ? "autoplay" : "manual");
+      const nextLast =
+        phase === "autoplay" || phase === "manual" ? phase : state.lastPlayPhase;
+      return {
+        chart,
+        phase,
+        sessionPlayMode: null,
+        lastPlayPhase: nextLast,
+      };
+    }),
 
   onScoreEvent: (event, totalNotes) =>
     set((state) => {
       const hits =
         event.judgement !== "miss" ? state.score + event.pointsAwarded : state.score;
-      const combo =
-        event.judgement !== "miss" && event.judgement !== "bad"
-          ? state.combo + 1
-          : 0;
+      const combo = event.combo;
       const maxCombo = Math.max(state.maxCombo, combo);
-      // Running accuracy: (perfects weighted 1 + greats weighted 0.75) / total
-      const accuracy = state.accuracy; // refined by ScoringEngine.finalize()
+      const accuracy = state.accuracy;
       return {
         score: hits,
         combo,
@@ -146,12 +202,16 @@ export const useGameStore = create<GameState>((set, get) => ({
   togglePlayMode: () => {
     const current = get().phase;
     const next: GamePhase = current === "autoplay" ? "manual" : "autoplay";
-    set({ phase: next });
+    set({
+      phase: next,
+      lastPlayPhase:
+        next === "autoplay" || next === "manual" ? next : get().lastPlayPhase,
+    });
     return next === "autoplay" ? "autoplay" : "manual";
   },
 
   resetRound: () =>
-    set({
+    set((state) => ({
       score: 0,
       combo: 0,
       maxCombo: 0,
@@ -160,10 +220,28 @@ export const useGameStore = create<GameState>((set, get) => ({
       session: null,
       chart: null,
       phase: "idle",
-    }),
+      sessionPlayMode: null,
+      lastPlayPhase: state.settings.autoplay ? "autoplay" : "manual",
+    })),
 
   updateSettings: (patch) =>
-    set((state) => ({
-      settings: { ...state.settings, ...patch },
-    })),
+    set((state) => {
+      const settings = AppSettingsSchema.parse({
+        ...state.settings,
+        ...patch,
+      });
+      try {
+        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+      } catch {
+        /* private mode / quota */
+      }
+      return {
+        settings,
+        ...(patch.autoplay !== undefined
+          ? {
+              lastPlayPhase: settings.autoplay ? "autoplay" : "manual",
+            }
+          : {}),
+      };
+    }),
 }));

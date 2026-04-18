@@ -1,165 +1,257 @@
-import React, { useRef, useEffect, useState } from "react";
-import { Application, Container, Graphics, Text, TextStyle } from "pixi.js";
-import type { Note } from "@spotifyhero/shared-types";
+import React, { useRef, useEffect } from "react";
+import type { Judgement, Note } from "@spotifyhero/shared-types";
 import { useGameStore } from "../store/gameStore.js";
+import { playbackClock } from "../lib/playbackClock.js";
 
-const LANE_COLORS = [0xe040fb, 0x1db954, 0xff9800, 0x2196f3];
+/**
+ * Canvas 2D highway — hot path avoids allocations, map/filter/sort per frame.
+ * Playhead uses `playbackClock` — smooth extrapolation; Spotify polls only re-anchor on meaningful drift.
+ */
+const LANE_HEX = ["#e040fb", "#1db954", "#ff9800", "#2196f3"];
 const LANE_COUNT = 4;
 const NOTE_RADIUS = 15;
 const HIT_LINE_Y_FRACTION = 0.82;
+const LOOK_BACK_MS = 400;
+const LOOK_AHEAD_MS = 2200;
 
 const PLAYABLE_PHASES = new Set(["autoplay", "manual", "paused"]);
 
-/**
- * NoteHighway — PixiJS lanes + falling notes.
- *
- * Performance: static geometry (lanes, hit line, receptors) is redrawn only when size or
- * track changes. Notes are batched into **one** Graphics via `clear()` per frame — no
- * per-note `new Graphics()` (that pattern tanked FPS to ~1).
- */
+const HIT_FX_MS = 480;
+const HIT_RING_EXPANSION = 56;
+/** Past this Y (CSS px) the note is considered off-screen downward. */
+const OFF_SCREEN_BOTTOM_PAD = 24;
+
+type HitFx = { lane: number; judgement: Judgement; t0: number };
+
+/** Canvas note visibility — updated from score events (same closure as highway loop). */
+type NoteVisibility = {
+  /** Tap hidden immediately after a good-timing hit. */
+  goneTap: Set<number>;
+  /** Hold: head gem removed after good head; sustain body until it scrolls away. */
+  holdNoHead: Set<number>;
+  /** Miss / bad: keep drawing until the gem slides past the bottom edge. */
+  missSlide: Set<number>;
+};
+
+function judgementFxColor(j: Judgement): string {
+  switch (j) {
+    case "perfect":
+      return "#f5fff9";
+    case "great":
+      return "#1ed760";
+    case "good":
+      return "#ffb74d";
+    case "bad":
+      return "#ff6e8b";
+    case "miss":
+      return "#ff5252";
+    default:
+      return "#fff";
+  }
+}
+
+function easeOutCubic(t: number): number {
+  const x = Math.min(1, Math.max(0, t));
+  return 1 - (1 - x) ** 3;
+}
+
+/** First index with notes[i].timeMs >= t (notes sorted by timeMs ascending). */
+function lowerBoundTime(notes: readonly Note[], t: number): number {
+  let lo = 0;
+  let hi = notes.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (notes[mid]!.timeMs < t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 export function NoteHighway(): React.ReactElement {
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const appRef = useRef<Application | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const chart = useGameStore((s) => s.chart);
-  const [pixiReady, setPixiReady] = useState(false);
+  const rafRef = useRef<number>(0);
+  const dimsRef = useRef({ cssW: -1, cssH: -1 });
+  const staticRef = useRef<{ key: string; off: HTMLCanvasElement } | null>(null);
+  const sortedNotesRef = useRef<readonly Note[]>([]);
 
   useEffect(() => {
-    const container = canvasRef.current;
-    if (!container) return;
-
-    let disposed = false;
-    let tornDown = false;
-    const app = new Application();
-
-    const safeDestroy = () => {
-      if (tornDown) return;
-      tornDown = true;
-      appRef.current = null;
-      setPixiReady(false);
-      try {
-        if (app.renderer) {
-          app.canvas?.remove();
-          app.destroy(true, true);
-        }
-      } catch {
-        /* ignore */
+    if (!chart?.notes) {
+      sortedNotesRef.current = [];
+      return;
+    }
+    const raw = chart.notes;
+    if (raw.length <= 1) {
+      sortedNotesRef.current = raw;
+      return;
+    }
+    let sorted = true;
+    for (let i = 1; i < raw.length; i++) {
+      if (raw[i]!.timeMs < raw[i - 1]!.timeMs) {
+        sorted = false;
+        break;
       }
-    };
-
-    const dpr = typeof window !== "undefined" ? Math.min(2, window.devicePixelRatio || 1) : 1;
-
-    void (async () => {
-      try {
-        await app.init({
-          resizeTo: container,
-          background: 0x0a0a12,
-          antialias: true,
-          autoDensity: true,
-          powerPreference: "high-performance",
-          resolution: dpr,
-        });
-      } catch {
-        return;
-      }
-      if (disposed) {
-        safeDestroy();
-        return;
-      }
-      container.appendChild(app.canvas);
-      appRef.current = app;
-      setPixiReady(true);
-    })();
-
-    return () => {
-      disposed = true;
-      if (appRef.current === app) {
-        safeDestroy();
-      }
-    };
-  }, []);
+    }
+    sortedNotesRef.current = sorted ? raw : [...raw].sort((a, b) => a.timeMs - b.timeMs);
+  }, [chart]);
 
   useEffect(() => {
-    if (!chart || !pixiReady) return;
-    const app = appRef.current;
-    if (!app?.renderer || !app.stage) return;
+    if (!chart) return;
 
-    const root = new Container();
-    app.stage.removeChildren();
-    app.stage.addChild(root);
+    const wrap = wrapRef.current;
+    const canvas = canvasRef.current;
+    if (!wrap || !canvas) return;
 
-    const staticG = new Graphics();
-    const notesG = new Graphics();
-    const modeText = new Text({
-      text: "",
-      style: new TextStyle({
-        fontSize: 11,
-        fill: 0x777788,
-        fontFamily: "system-ui, Segoe UI, sans-serif",
-        fontWeight: "600",
-      }),
+    const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+    if (!ctx) return;
+
+    const hitEffects: HitFx[] = [];
+    let lastEventSig = "";
+
+    const visibility: NoteVisibility = {
+      goneTap: new Set(),
+      holdNoHead: new Set(),
+      missSlide: new Set(),
+    };
+
+    const unsubHits = useGameStore.subscribe((state) => {
+      const ev = state.lastScoreEvent;
+      const ch = state.chart;
+      if (!ev || !ch?.notes[ev.noteIndex]) return;
+      const sig = `${ev.noteIndex}:${ev.judgement}:${ev.pointsAwarded}:${ev.combo}`;
+      if (sig === lastEventSig) return;
+      lastEventSig = sig;
+      const lane = ch.notes[ev.noteIndex]!.lane;
+      hitEffects.push({ lane, judgement: ev.judgement, t0: performance.now() });
+      if (hitEffects.length > 14) hitEffects.splice(0, hitEffects.length - 14);
+
+      const note = ch.notes[ev.noteIndex]!;
+      const idx = ev.noteIndex;
+      const good =
+        ev.judgement === "perfect" ||
+        ev.judgement === "great" ||
+        ev.judgement === "good";
+      const failed = ev.judgement === "miss" || ev.judgement === "bad";
+
+      if (failed) {
+        visibility.goneTap.delete(idx);
+        visibility.holdNoHead.delete(idx);
+        visibility.missSlide.add(idx);
+        return;
+      }
+      if (!good) return;
+
+      if (note.durationMs <= 0) {
+        visibility.goneTap.add(idx);
+        visibility.missSlide.delete(idx);
+        return;
+      }
+      // Hold: head row only (not sustain tick events)
+      if (ev.countsTowardAccuracy !== false) {
+        visibility.holdNoHead.add(idx);
+        visibility.missSlide.delete(idx);
+      }
     });
-    root.addChild(staticG);
-    root.addChild(notesG);
-    root.addChild(modeText);
 
-    let lastStaticKey = "";
-    let lastModeLabel = "";
+    const rebuildStatic = (
+      logicalW: number,
+      logicalH: number,
+      pxW: number,
+      pxH: number,
+      dpr: number,
+      trackId: string
+    ): HTMLCanvasElement => {
+      const key = `${Math.round(logicalW)}x${Math.round(logicalH)}-${trackId}`;
+      const prev = staticRef.current;
+      if (prev?.key === key && prev.off.width === pxW && prev.off.height === pxH) {
+        return prev.off;
+      }
 
-    const tick = (): void => {
+      const off = document.createElement("canvas");
+      off.width = pxW;
+      off.height = pxH;
+      const octx = off.getContext("2d");
+      if (!octx) return off;
+
+      octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      paintStatic(octx, logicalW, logicalH);
+      staticRef.current = { key, off };
+      return off;
+    };
+
+    const resizeIfNeeded = (): { dpr: number; lw: number; lh: number } | null => {
+      const cssW = Math.max(2, wrap.clientWidth);
+      const cssH = Math.max(2, wrap.clientHeight);
+      const { cssW: ow, cssH: oh } = dimsRef.current;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+      if (cssW !== ow || cssH !== oh) {
+        dimsRef.current = { cssW, cssH };
+        canvas.width = Math.floor(cssW * dpr);
+        canvas.height = Math.floor(cssH * dpr);
+        canvas.style.width = `${cssW}px`;
+        canvas.style.height = `${cssH}px`;
+        staticRef.current = null;
+      }
+
+      const lw = canvas.width / dpr;
+      const lh = canvas.height / dpr;
+      return { dpr, lw, lh };
+    };
+
+    const loop = (): void => {
+      rafRef.current = requestAnimationFrame(loop);
+
       const state = useGameStore.getState();
       if (!PLAYABLE_PHASES.has(state.phase)) return;
       const c = state.chart;
       if (!c) return;
 
-      const pos = state.playback?.positionMs ?? 0;
-      let w = Math.max(2, Math.floor(app.screen.width));
-      let h = Math.max(2, Math.floor(app.screen.height));
-      const el = canvasRef.current;
-      if (el && (w < 4 || h < 4)) {
-        w = Math.max(2, Math.floor(el.clientWidth));
-        h = Math.max(2, Math.floor(el.clientHeight));
-      }
-      if (w < 4 || h < 4) return;
+      const dim = resizeIfNeeded();
+      if (!dim || dim.lw < 2 || dim.lh < 2) return;
 
-      const staticKey = `${w}x${h}-${c.trackId}`;
-      if (staticKey !== lastStaticKey) {
-        lastStaticKey = staticKey;
-        drawStaticLayer(staticG, w, h);
-      }
+      const { dpr, lw, lh } = dim;
+      const pos = playbackClock.estimateMs();
 
-      drawNotesLayer(notesG, c.notes ?? [], pos, w, h);
+      const off = rebuildStatic(lw, lh, canvas.width, canvas.height, dpr, c.trackId);
 
-      const modeLabel =
-        state.phase === "manual"
-          ? "MANUAL"
-          : state.phase === "paused"
-            ? "PAUSED"
-            : "AUTO";
-      if (modeLabel !== lastModeLabel) {
-        lastModeLabel = modeLabel;
-        modeText.text = modeLabel;
-        modeText.style.fill =
-          state.phase === "manual"
-            ? 0x1db954
-            : state.phase === "paused"
-              ? 0xff9800
-              : 0x777788;
-      }
-      modeText.position.set(8, h - 22);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = "#06060c";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(off, 0, 0);
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      paintNotes(ctx, sortedNotesRef.current, pos, lw, lh, visibility);
+      paintHitEffects(ctx, lw, lh, hitEffects, performance.now());
     };
 
-    app.ticker.add(tick);
-    tick();
+    dimsRef.current = { cssW: -1, cssH: -1 };
+    resizeIfNeeded();
+    rafRef.current = requestAnimationFrame(loop);
+
+    const ro = new ResizeObserver(() => {
+      staticRef.current = null;
+    });
+    ro.observe(wrap);
 
     return () => {
-      app.ticker.remove(tick);
-      app.stage?.removeChildren();
+      unsubHits();
+      cancelAnimationFrame(rafRef.current);
+      ro.disconnect();
+      staticRef.current = null;
+      dimsRef.current = { cssW: -1, cssH: -1 };
+      hitEffects.length = 0;
+      lastEventSig = "";
+      visibility.goneTap.clear();
+      visibility.holdNoHead.clear();
+      visibility.missSlide.clear();
     };
-  }, [chart, pixiReady]);
+  }, [chart]);
 
   return (
     <div
-      ref={canvasRef}
+      ref={wrapRef}
       style={{
         flex: 1,
         width: "100%",
@@ -167,74 +259,348 @@ export function NoteHighway(): React.ReactElement {
         position: "relative",
         overflow: "hidden",
       }}
-    />
+    >
+      <canvas
+        ref={canvasRef}
+        style={{
+          display: "block",
+          width: "100%",
+          height: "100%",
+        }}
+      />
+    </div>
   );
 }
 
-function drawStaticLayer(g: Graphics, width: number, height: number): void {
-  g.clear();
+function paintStatic(ctx: CanvasRenderingContext2D, width: number, height: number): void {
   const laneWidth = width / LANE_COUNT;
   const hitLineY = height * HIT_LINE_Y_FRACTION;
 
-  g.rect(0, 0, width, height).fill({ color: 0x06060c, alpha: 1 });
+  const grad = ctx.createLinearGradient(0, 0, 0, height);
+  grad.addColorStop(0, "#0e0e18");
+  grad.addColorStop(1, "#050508");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, width, height);
+
   for (let i = 0; i < LANE_COUNT; i++) {
     const x = i * laneWidth;
-    g.rect(x, 0, laneWidth, height).fill({
-      color: LANE_COLORS[i] ?? 0xffffff,
-      alpha: 0.08,
-    });
+    ctx.fillStyle = hexWithAlphaStatic(LANE_HEX[i] ?? "#fff", 0.09);
+    ctx.fillRect(x, 0, laneWidth, height);
   }
+
   for (let i = 1; i < LANE_COUNT; i++) {
     const x = i * laneWidth;
-    g.rect(x - 0.5, 0, 1, height).fill({ color: 0x4a4a5c, alpha: 0.85 });
+    ctx.fillStyle = "rgba(74,74,92,0.85)";
+    ctx.fillRect(x - 0.5, 0, 1, height);
   }
-  g.rect(0, hitLineY - 4, width, 8).fill({ color: 0x1db954, alpha: 0.14 });
-  g.rect(0, hitLineY - 1.5, width, 3).fill({ color: 0x9a9ab0, alpha: 1 });
+
+  ctx.fillStyle = "rgba(29,185,84,0.16)";
+  ctx.fillRect(0, hitLineY - 4, width, 8);
+  ctx.fillStyle = "rgba(154,154,176,1)";
+  ctx.fillRect(0, hitLineY - 1.5, width, 3);
 
   for (let i = 0; i < LANE_COUNT; i++) {
     const cx = i * laneWidth + laneWidth / 2;
-    g.circle(cx, hitLineY, NOTE_RADIUS + 5).fill({ color: 0x000000, alpha: 0.35 });
-    g.circle(cx, hitLineY, NOTE_RADIUS + 2).stroke({
-      width: 2,
-      color: LANE_COLORS[i] ?? 0xffffff,
-      alpha: 0.9,
-    });
+    ctx.fillStyle = "rgba(0,0,0,0.38)";
+    ctx.beginPath();
+    ctx.arc(cx, hitLineY, NOTE_RADIUS + 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = LANE_HEX[i] ?? "#fff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, hitLineY, NOTE_RADIUS + 2, 0, Math.PI * 2);
+    ctx.stroke();
   }
 }
 
-function drawNotesLayer(
-  g: Graphics,
-  notes: Note[],
+/** Static layer only — not per-frame. */
+function hexWithAlphaStatic(hex: string, alpha: number): string {
+  const n = hex.replace("#", "");
+  const full =
+    n.length === 3 ? n.split("").map((c) => c + c).join("") : n.padEnd(6, "0").slice(0, 6);
+  const v = parseInt(full, 16);
+  const r = (v >> 16) & 255;
+  const g = (v >> 8) & 255;
+  const b = v & 255;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/**
+ * Visible window via binary search + forward scan — no map/filter/sort allocations.
+ */
+function paintNotes(
+  ctx: CanvasRenderingContext2D,
+  notes: readonly Note[],
   positionMs: number,
   width: number,
-  height: number
+  height: number,
+  vis: NoteVisibility
 ): void {
-  g.clear();
+  const n = notes.length;
+  if (n === 0) return;
+
   const laneWidth = width / LANE_COUNT;
   const hitLineY = height * HIT_LINE_Y_FRACTION;
-  const lookAheadMs = 2200;
-  const pxPerMs = hitLineY / lookAheadMs;
+  const pxPerMs = hitLineY / LOOK_AHEAD_MS;
 
-  const visible = notes
-    .map((n) => ({ n, timeUntil: n.timeMs - positionMs }))
-    .filter(({ timeUntil }) => timeUntil > -400 && timeUntil < lookAheadMs)
-    .sort((a, b) => b.timeUntil - a.timeUntil);
-
-  for (const { n: note, timeUntil } of visible) {
-    const cx = note.lane * laneWidth + laneWidth / 2;
-    const cy = hitLineY - timeUntil * pxPerMs;
-    const color = LANE_COLORS[note.lane] ?? 0xffffff;
-    const pulse = Math.min(1, Math.max(0, 1 - Math.abs(timeUntil) / 900));
-
-    g.circle(cx, cy, NOTE_RADIUS + 5 + pulse * 3).fill({
-      color,
-      alpha: 0.14 + pulse * 0.1,
-    });
-    g.circle(cx, cy, NOTE_RADIUS).fill({ color, alpha: 1 });
-    g.circle(cx, cy, NOTE_RADIUS).stroke({
-      width: 2,
-      color: 0xffffff,
-      alpha: 0.4,
-    });
+  const tLow = positionMs - LOOK_BACK_MS;
+  const tHigh = positionMs + LOOK_AHEAD_MS;
+  let i = lowerBoundTime(notes, tLow);
+  while (i > 0) {
+    const prev = notes[i - 1]!;
+    const prevEnd =
+      prev.durationMs > 0 ? prev.timeMs + prev.durationMs : prev.timeMs;
+    if (prevEnd >= tLow) i -= 1;
+    else break;
   }
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(255,255,255,0.42)";
+
+  for (; i < n; i++) {
+    const note = notes[i]!;
+    if (vis.goneTap.has(i)) continue;
+    if (vis.missSlide.has(i)) continue;
+
+    const endMs = note.durationMs > 0 ? note.timeMs + note.durationMs : note.timeMs;
+
+    if (note.timeMs > tHigh) break;
+
+    if (endMs < tLow) continue;
+
+    const timeUntil = note.timeMs - positionMs;
+    const lane = note.lane;
+    const cx = lane * laneWidth + laneWidth / 2;
+    const cy = hitLineY - timeUntil * pxPerMs;
+    const hex = LANE_HEX[lane] ?? "#ffffff";
+    const pulse = timeUntil > 900 || timeUntil < -900 ? 0 : 1 - Math.abs(timeUntil) / 900;
+    const glowR = NOTE_RADIUS + 5 + pulse * 3;
+    const holdStripOnly = note.durationMs > 0 && vis.holdNoHead.has(i);
+
+    if (note.durationMs > 0) {
+      const timeUntilTail = endMs - positionMs;
+      const cyTail = hitLineY - timeUntilTail * pxPerMs;
+      const top = Math.min(cy, cyTail);
+      const h = Math.abs(cyTail - cy);
+      const bodyW = NOTE_RADIUS * 2.35;
+      ctx.globalAlpha = holdStripOnly ? 0.48 : 0.42;
+      ctx.fillStyle = hex;
+      ctx.beginPath();
+      ctx.roundRect(cx - bodyW / 2, top, bodyW, Math.max(h, 4), 7);
+      ctx.fill();
+      ctx.globalAlpha = holdStripOnly ? 0.72 : 0.65;
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(cx - bodyW / 2, top, bodyW, Math.max(h, 4), 7);
+      ctx.stroke();
+    }
+
+    if (!holdStripOnly) {
+      ctx.globalAlpha = 0.14 + pulse * 0.1;
+      ctx.fillStyle = hex;
+      ctx.beginPath();
+      ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = hex;
+      ctx.beginPath();
+      ctx.arc(cx, cy, NOTE_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "rgba(255,255,255,0.42)";
+      ctx.beginPath();
+      ctx.arc(cx, cy, NOTE_RADIUS, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+
+  ctx.globalAlpha = 1;
+
+  for (const idx of [...vis.holdNoHead]) {
+    const note = notes[idx];
+    if (!note || note.durationMs <= 0) {
+      vis.holdNoHead.delete(idx);
+      continue;
+    }
+    const endMs = note.timeMs + note.durationMs;
+    const timeUntilTail = endMs - positionMs;
+    const cyTail = hitLineY - timeUntilTail * pxPerMs;
+    if (cyTail > height + OFF_SCREEN_BOTTOM_PAD) {
+      vis.holdNoHead.delete(idx);
+    }
+  }
+
+  paintMissSlidingNotes(ctx, notes, positionMs, width, height, vis.missSlide);
+}
+
+/** Missed / bad notes: keep scrolling until past the bottom edge, then drop from the set. */
+function paintMissSlidingNotes(
+  ctx: CanvasRenderingContext2D,
+  notes: readonly Note[],
+  positionMs: number,
+  width: number,
+  height: number,
+  missSlide: Set<number>
+): void {
+  if (missSlide.size === 0) return;
+
+  const laneWidth = width / LANE_COUNT;
+  const hitLineY = height * HIT_LINE_Y_FRACTION;
+  const pxPerMs = hitLineY / LOOK_AHEAD_MS;
+  const toRemove: number[] = [];
+
+  for (const idx of missSlide) {
+    const note = notes[idx];
+    if (!note) {
+      toRemove.push(idx);
+      continue;
+    }
+
+    const endMs = note.durationMs > 0 ? note.timeMs + note.durationMs : note.timeMs;
+    const timeUntil = note.timeMs - positionMs;
+    const timeUntilTail = endMs - positionMs;
+    const lane = note.lane;
+    const cx = lane * laneWidth + laneWidth / 2;
+    const cy = hitLineY - timeUntil * pxPerMs;
+    const cyTail = hitLineY - timeUntilTail * pxPerMs;
+    const bottom = Math.max(cy, cyTail);
+
+    if (bottom > height + OFF_SCREEN_BOTTOM_PAD) {
+      toRemove.push(idx);
+      continue;
+    }
+
+    const hex = LANE_HEX[lane] ?? "#ffffff";
+    const pulse = 0.35;
+
+    if (note.durationMs > 0) {
+      const top = Math.min(cy, cyTail);
+      const h = Math.abs(cyTail - cy);
+      const bodyW = NOTE_RADIUS * 2.35;
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = hex;
+      ctx.beginPath();
+      ctx.roundRect(cx - bodyW / 2, top, bodyW, Math.max(h, 4), 7);
+      ctx.fill();
+      ctx.globalAlpha = 0.55;
+      ctx.strokeStyle = "rgba(255,82,82,0.55)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(cx - bodyW / 2, top, bodyW, Math.max(h, 4), 7);
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 0.22 + pulse * 0.08;
+    ctx.fillStyle = hex;
+    ctx.beginPath();
+    ctx.arc(cx, cy, NOTE_RADIUS + 5 + pulse * 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.globalAlpha = 0.72;
+    ctx.fillStyle = hex;
+    ctx.beginPath();
+    ctx.arc(cx, cy, NOTE_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(255,82,82,0.9)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, NOTE_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  for (const idx of toRemove) {
+    missSlide.delete(idx);
+  }
+
+  ctx.globalAlpha = 1;
+}
+
+function paintHitEffects(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  effects: HitFx[],
+  now: number
+): void {
+  const laneWidth = width / LANE_COUNT;
+  const hitLineY = height * HIT_LINE_Y_FRACTION;
+
+  for (let i = effects.length - 1; i >= 0; i--) {
+    if (now - effects[i]!.t0 > HIT_FX_MS) effects.splice(i, 1);
+  }
+
+  for (const fx of effects) {
+    const elapsed = now - fx.t0;
+    const t = elapsed / HIT_FX_MS;
+    if (t >= 1) continue;
+
+    const cx = fx.lane * laneWidth + laneWidth / 2;
+    const cy = hitLineY;
+    const col = judgementFxColor(fx.judgement);
+    const e = easeOutCubic(t);
+
+    // Brief bright bloom (perfect / great pop harder)
+    if (t < 0.22) {
+      const bloom = 1 - t / 0.22;
+      const br =
+        fx.judgement === "perfect"
+          ? NOTE_RADIUS + 22 * bloom
+          : NOTE_RADIUS + 14 * bloom;
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, br);
+      g.addColorStop(0, hexToRgba(col, 0.55 * bloom));
+      g.addColorStop(0.45, hexToRgba(col, 0.12 * bloom));
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(cx, cy, br, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Expanding rings (impact)
+    const rOuter = NOTE_RADIUS + 8 + e * HIT_RING_EXPANSION;
+    const alphaRing = (1 - t) * (fx.judgement === "perfect" ? 0.95 : 0.72);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = Math.max(1.2, 3.2 - 2.1 * e);
+    ctx.globalAlpha = alphaRing;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rOuter, 0, Math.PI * 2);
+    ctx.stroke();
+
+    const t2 = Math.max(0, t - 0.1) / 0.9;
+    const e2 = easeOutCubic(t2);
+    const rMid = NOTE_RADIUS + 4 + e2 * (HIT_RING_EXPANSION * 0.65);
+    ctx.globalAlpha = (1 - t2) * 0.45;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, rMid, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Inner tick ring — crisp on perfect
+    if (fx.judgement === "perfect" && t < 0.35) {
+      const ti = t / 0.35;
+      const rTick = NOTE_RADIUS + 3 + (1 - ti) * 10;
+      ctx.globalAlpha = (1 - ti) * 0.9;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, rTick, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+  }
+}
+
+/** #rrggbb + alpha → rgba() for gradients */
+function hexToRgba(hex: string, a: number): string {
+  const n = hex.replace("#", "");
+  const full =
+    n.length === 3 ? n.split("").map((c) => c + c).join("") : n.padEnd(6, "0").slice(0, 6);
+  const v = parseInt(full, 16);
+  const r = (v >> 16) & 255;
+  const g = (v >> 8) & 255;
+  const b = v & 255;
+  return `rgba(${r},${g},${b},${a})`;
 }
