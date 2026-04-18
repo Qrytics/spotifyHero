@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 type TauriAppSettingsPayload = {
   noteScrollSpeed: number;
+  playbackTimingOffsetMs: number;
 };
 
 function isTauriRuntime(): boolean {
@@ -13,7 +14,11 @@ export async function loadTauriAppSettings(): Promise<TauriAppSettingsPayload | 
   try {
     const payload = await invoke<TauriAppSettingsPayload>("load_app_settings");
     if (!Number.isFinite(payload.noteScrollSpeed)) return null;
-    return payload;
+    const o = payload.playbackTimingOffsetMs;
+    if (typeof o === "number" && Number.isFinite(o)) {
+      return payload;
+    }
+    return { ...payload, playbackTimingOffsetMs: 0 };
   } catch {
     return null;
   }

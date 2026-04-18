@@ -1,3 +1,4 @@
+pub mod audio_features;
 pub mod config;
 pub mod oauth;
 pub mod playback;

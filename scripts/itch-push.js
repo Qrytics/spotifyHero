@@ -17,10 +17,12 @@ const bundleDir = path.join(
   "apps/desktop/src-tauri/target/release/bundle/nsis"
 );
 
+/** Values in scripts/itch.env override inherited env (e.g. IDE shells with ITCH_USER=test). */
 function loadLocalEnv() {
   const envPath = path.join(__dirname, "itch.env");
   if (!fs.existsSync(envPath)) return;
   const text = fs.readFileSync(envPath, "utf8");
+  let setDry = false;
   for (const line of text.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -34,8 +36,10 @@ function loadLocalEnv() {
     ) {
       val = val.slice(1, -1);
     }
-    if (process.env[key] === undefined) process.env[key] = val;
+    if (key === "ITCH_DRY_RUN") setDry = true;
+    process.env[key] = val;
   }
+  if (!setDry) delete process.env.ITCH_DRY_RUN;
 }
 
 function findInstaller() {
@@ -57,16 +61,41 @@ function findInstaller() {
   return { exePath: path.join(bundleDir, setup), version: conf.version };
 }
 
-function whichButler() {
+function resolveButler() {
   try {
     const cmd = process.platform === "win32" ? "where" : "which";
     execFileSync(cmd, ["butler"], { stdio: "pipe" });
     return "butler";
   } catch {
-    throw new Error(
-      "butler not found on PATH. Install: https://itch.io/docs/butler/installing.html"
-    );
+    /* fall through */
   }
+
+  if (process.platform === "win32" && process.env.APPDATA) {
+    const chosenPath = path.join(
+      process.env.APPDATA,
+      "itch",
+      "broth",
+      "butler",
+      ".chosen-version"
+    );
+    if (fs.existsSync(chosenPath)) {
+      const ver = fs.readFileSync(chosenPath, "utf8").trim();
+      const exePath = path.join(
+        process.env.APPDATA,
+        "itch",
+        "broth",
+        "butler",
+        "versions",
+        ver,
+        "butler.exe"
+      );
+      if (fs.existsSync(exePath)) return exePath;
+    }
+  }
+
+  throw new Error(
+    "butler not found (PATH or itch app bundle). Install: https://itch.io/docs/butler/installing.html"
+  );
 }
 
 function main() {
@@ -97,8 +126,8 @@ function main() {
     return;
   }
 
-  whichButler();
-  execFileSync("butler", args, { stdio: "inherit", cwd: root });
+  const butler = resolveButler();
+  execFileSync(butler, args, { stdio: "inherit", cwd: root });
   console.log("Done. Set the uploaded file as “Windows” executable on itch if prompted.");
 }
 

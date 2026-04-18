@@ -17,10 +17,11 @@ import {
 // ---------------------------------------------------------------------------
 
 export const DEFAULT_HIT_WINDOWS: HitWindows = {
-  perfect: 38,
-  great: 58,
-  good: 105,
-  bad: 150,
+  /** ±ms — wide perfect band vs chart time (network/audio latency friendly). */
+  perfect: 110,
+  great: 132,
+  good: 168,
+  bad: 215,
 };
 
 // Points awarded per judgement

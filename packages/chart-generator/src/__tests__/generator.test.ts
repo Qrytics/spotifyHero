@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { BeatEvent, Note } from "@spotifyhero/shared-types";
 import {
   generateDeterministicChart,
   estimateBpm,
@@ -8,7 +9,67 @@ import {
   mergeContiguousSustainSeries,
   DIFFICULTY_PARAMS,
 } from "../index.js";
-import type { BeatEvent, Note } from "@spotifyhero/shared-types";
+import { buildRhythmContext, inferBeatsPerMeasure } from "../rhythm.js";
+
+describe("rhythm context", () => {
+  it("counts onsets per quarter-beat window for mixed subdivisions", () => {
+    const beatMs = 500;
+    const events: BeatEvent[] = [];
+    for (let t = 0; t < 8 * beatMs; t += beatMs) {
+      events.push({
+        timeMs: t,
+        confidence: 0.9,
+        isBeat: true,
+        isOnset: true,
+      });
+    }
+    const onsets: BeatEvent[] = [];
+    for (let t = 0; t < 8 * beatMs; t += beatMs / 4) {
+      onsets.push({
+        timeMs: t,
+        confidence: 0.85,
+        isBeat: false,
+        isOnset: true,
+      });
+    }
+    const ctx = buildRhythmContext(events, onsets, 120);
+    expect(ctx.onsetsPerBeat.some((c) => c >= 3)).toBe(true);
+    expect(ctx.beatsPerMeasure === 3 || ctx.beatsPerMeasure === 4).toBe(true);
+  });
+
+  it("inferBeatsPerMeasure prefers 3 for waltz-like accent spacing", () => {
+    const pat: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      pat.push(i % 3 === 0 ? 5 : 1);
+    }
+    expect(inferBeatsPerMeasure(pat)).toBe(3);
+  });
+
+  it("raises melodicAggression when pitch jumps between fast onsets", () => {
+    const beatMs = 500;
+    const events: BeatEvent[] = [
+      { timeMs: 0, confidence: 0.9, isBeat: true, isOnset: true },
+    ];
+    const onsets: BeatEvent[] = [];
+    const base = 440;
+    for (let i = 0; i < 8; i++) {
+      const t = 50 + i * 45;
+      onsets.push({
+        timeMs: t,
+        confidence: 0.88,
+        isBeat: false,
+        isOnset: true,
+        pitchHz: base * 2 ** (i / 3),
+        spectralFlux: 0.4 + i * 0.05,
+        rms: 0.2 + i * 0.03,
+      });
+    }
+    const ctx = buildRhythmContext(events, onsets, 120);
+    expect(ctx.melodicAggression.length).toBe(ctx.onsetsPerBeat.length);
+    const maxMel = Math.max(...ctx.melodicAggression);
+    expect(maxMel).toBeGreaterThan(0.25);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -224,12 +285,12 @@ describe("generateDeterministicChart", () => {
     }
   });
 
-  it("uses deterministic-1.7 generator version", () => {
+  it("uses deterministic-1.9 generator version", () => {
     const beats = makeBeatEvents(5, 500);
     const chart = generateDeterministicChart("v", beats, 120, {
       difficulty: "medium",
     });
-    expect(chart.generatorVersion).toBe("deterministic-1.7");
+    expect(chart.generatorVersion).toBe("deterministic-1.9");
   });
 
   it("confidence-first filter with mixed strengths yields fewer easy notes than expert", () => {
@@ -270,9 +331,7 @@ describe("generateDeterministicChart", () => {
     const expert = generateDeterministicChart("dense", beats, 120, {
       difficulty: "expert",
     });
-    const hardCounts = countTapHold(hard.notes);
-    const expertCounts = countTapHold(expert.notes);
-    expect(expertCounts.taps).toBeGreaterThan(hardCounts.taps);
+    expect(expert.notes.length).toBeGreaterThan(hard.notes.length);
   });
 
   it("expert can generate simultaneous chord notes", () => {
@@ -309,7 +368,7 @@ describe("generateDeterministicChart", () => {
       if (total === 0) continue;
       const sustainPct = counts.holds / total;
       const preset = DIFFICULTY_PARAMS[difficulty];
-      if (hasEligibleSustainWindow(beats, difficulty, 125)) {
+      if (hasEligibleSustainWindow(beats, difficulty, estimateBpm(beats))) {
         expect(sustainPct).toBeGreaterThanOrEqual(
           preset.minSustainPercent - 0.01
         );
@@ -433,7 +492,7 @@ describe("HybridChartGenerator", () => {
     const gen = new HybridChartGenerator(new PassthroughMLRefiner(), 0.65);
     const beats = makeBeatEvents(20, 500);
     const chart = await gen.generate("t", beats, 120, { difficulty: "medium" });
-    expect(chart.generatorVersion).toBe("deterministic-1.7");
+    expect(chart.generatorVersion).toBe("deterministic-1.9");
   });
 
   it("returns a valid chart shape", async () => {

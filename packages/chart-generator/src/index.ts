@@ -1,4 +1,10 @@
 import type { BeatEvent, Chart, Difficulty, Note } from "@spotifyhero/shared-types";
+import {
+  buildRhythmContext,
+  chordCapForTime,
+  chordSizeForRhythm,
+  densityFilterPerBeat,
+} from "./rhythm.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -69,6 +75,8 @@ export const DIFFICULTY_PARAMS: Record<
     sustainConfidenceMin: number;
     /** Hard cap for consecutive sustain heads (prevents long sustain-only chains). */
     maxConsecutiveSustains: number;
+    /** Drop onsets at or below this confidence (after silence gate). */
+    onsetConfidenceFloor: number;
     /** Difficulty-tuned silence gate thresholds for onset eligibility. */
     silenceGate: SilenceGateThresholds;
   }
@@ -85,6 +93,7 @@ export const DIFFICULTY_PARAMS: Record<
     maxSustainPercent: 0.14,
     sustainConfidenceMin: 0.72,
     maxConsecutiveSustains: 1,
+    onsetConfidenceFloor: 0.3,
     silenceGate: {
       enterAmplitude: 0.045,
       enterRms: 0.032,
@@ -105,6 +114,7 @@ export const DIFFICULTY_PARAMS: Record<
     maxSustainPercent: 0.18,
     sustainConfidenceMin: 0.68,
     maxConsecutiveSustains: 2,
+    onsetConfidenceFloor: 0.3,
     silenceGate: {
       enterAmplitude: 0.04,
       enterRms: 0.028,
@@ -125,6 +135,7 @@ export const DIFFICULTY_PARAMS: Record<
     maxSustainPercent: 0.22,
     sustainConfidenceMin: 0.64,
     maxConsecutiveSustains: 2,
+    onsetConfidenceFloor: 0.3,
     silenceGate: {
       enterAmplitude: 0.036,
       enterRms: 0.025,
@@ -134,17 +145,20 @@ export const DIFFICULTY_PARAMS: Record<
     },
   },
   expert: {
-    densityMultiplier: 1.0,
-    minGapMs: 58,
-    holdGapMinMs: 220,
-    holdGapMaxMs: 760,
-    holdGapBeatFraction: 0.72,
-    minHoldDurationMs: 210,
-    holdMaxDurationMs: 620,
-    minSustainPercent: 0.12,
-    maxSustainPercent: 0.28,
-    sustainConfidenceMin: 0.48,
-    maxConsecutiveSustains: 2,
+    /** >1 samples duplicate onsets when confidence is uniform — effectively ~2× tap streams. */
+    densityMultiplier: 1.92,
+    minGapMs: 36,
+    holdGapMinMs: 170,
+    holdGapMaxMs: 600,
+    holdGapBeatFraction: 0.74,
+    minHoldDurationMs: 185,
+    holdMaxDurationMs: 500,
+    minSustainPercent: 0.11,
+    maxSustainPercent: 0.36,
+    sustainConfidenceMin: 0.35,
+    maxConsecutiveSustains: 4,
+    onsetConfidenceFloor: 0.17,
+    /** Keep aligned with silence-suppression tests: low RMS must still register as "quiet". */
     silenceGate: {
       enterAmplitude: 0.03,
       enterRms: 0.02,
@@ -654,40 +668,6 @@ function pickLaneDeterministic(
   return valid[idx]!;
 }
 
-function chordSizeForEvent(
-  difficulty: Difficulty,
-  trackId: string,
-  timeMs: number,
-  confidence: number
-): 1 | 2 | 3 | 4 {
-  if (confidence < 0.45) return 1;
-  let h = 2166136261;
-  for (let i = 0; i < trackId.length; i++) {
-    h = Math.imul(h ^ trackId.charCodeAt(i), 16777619);
-  }
-  h = Math.imul(h ^ Math.floor(timeMs), 2246822519);
-  const roll = (mix32(h) >>> 0) / 4294967296;
-  if (difficulty === "easy") {
-    if (roll < 0.035) return 2;
-    return 1;
-  }
-  if (difficulty === "medium") {
-    if (roll < 0.02) return 3;
-    if (roll < 0.095) return 2;
-    return 1;
-  }
-  if (difficulty === "hard") {
-    if (roll < 0.015) return 4;
-    if (roll < 0.07) return 3;
-    if (roll < 0.2) return 2;
-    return 1;
-  }
-  if (roll < 0.03) return 4;
-  if (roll < 0.12) return 3;
-  if (roll < 0.33) return 2;
-  return 1;
-}
-
 // ---------------------------------------------------------------------------
 // Step 1 – Deterministic signal-based chart generation
 // ---------------------------------------------------------------------------
@@ -715,14 +695,17 @@ export function generateDeterministicChart(
   const normalizationProfile = options.normalizationProfile ?? "balanced";
   const laneCount = LANE_COUNTS[difficulty];
   const densityMultiplier = preset.densityMultiplier;
-  const confidenceFloor = 0.3;
+  const confidenceFloor = preset.onsetConfidenceFloor;
   const onsetCandidates = beatEvents.filter((e) => e.isOnset);
   const silenceGateResult = applySilenceGate(
     onsetCandidates,
     preset.silenceGate,
     normalizationProfile
   );
-  const onsets = silenceGateResult.gated.filter((e) => e.confidence > confidenceFloor);
+  const rhythmOnsets = silenceGateResult.gated;
+  const rhythmCtx = buildRhythmContext(beatEvents, rhythmOnsets, bpm);
+
+  const onsets = rhythmOnsets.filter((e) => e.confidence > confidenceFloor);
   const extractionStats = summarizeFeatureExtraction(
     onsetCandidates,
     silenceGateResult.gated,
@@ -734,42 +717,32 @@ export function generateDeterministicChart(
     `[chart-generator] ${trackId}/${difficulty} feature stats`,
     extractionStats
   );
+  const melAvg =
+    rhythmCtx.melodicAggression.length > 0
+      ? rhythmCtx.melodicAggression.reduce((a, b) => a + b, 0) /
+        rhythmCtx.melodicAggression.length
+      : 0;
+  console.debug(`[chart-generator] ${trackId}/${difficulty} rhythm`, {
+    effectiveBpm: Math.round(rhythmCtx.effectiveBpm),
+    beatPeriodMs: Math.round(rhythmCtx.beatPeriodMs),
+    beatsPerMeasure: rhythmCtx.beatsPerMeasure,
+    melodicAggressionAvg: Math.round(melAvg * 1000) / 1000,
+  });
 
-  // Density filter: confidence-first when strengths differ; uniform-confidence inputs keep legacy even spread in time
-  const targetCount = Math.ceil(onsets.length * densityMultiplier);
   let minConf = Infinity;
   let maxConf = -Infinity;
   for (const e of onsets) {
     if (e.confidence < minConf) minConf = e.confidence;
     if (e.confidence > maxConf) maxConf = e.confidence;
   }
-  const uniformConfidence =
-    onsets.length === 0 || minConf === maxConf;
+  const uniformConfidence = onsets.length === 0 || minConf === maxConf;
 
-  let filtered: BeatEvent[];
-  if (uniformConfidence) {
-    const sortedByTime = [...onsets].sort((a, b) => a.timeMs - b.timeMs);
-    const step = sortedByTime.length / Math.max(targetCount, 1);
-    filtered = [];
-    let cursor = 0;
-    while (
-      filtered.length < targetCount &&
-      Math.floor(cursor) < sortedByTime.length
-    ) {
-      const idx = Math.floor(cursor);
-      const event = sortedByTime[idx];
-      if (event) filtered.push(event);
-      cursor += step;
-    }
-  } else {
-    const sortedByConfidence = [...onsets].sort((a, b) => {
-      const d = b.confidence - a.confidence;
-      return d !== 0 ? d : a.timeMs - b.timeMs;
-    });
-    filtered = sortedByConfidence
-      .slice(0, Math.max(0, targetCount))
-      .sort((a, b) => a.timeMs - b.timeMs);
-  }
+  const filtered = densityFilterPerBeat(
+    onsets,
+    rhythmCtx,
+    densityMultiplier,
+    uniformConfidence
+  );
 
   const laneLastMs: number[] = new Array(laneCount).fill(-Infinity);
   const candidates: SustainAssignmentCandidate[] = [];
@@ -797,9 +770,16 @@ export function generateDeterministicChart(
     laneLastMs[lane] = event.timeMs;
 
     if (validLanes.length > 1) {
+      const cap = chordCapForTime(event.timeMs, rhythmCtx);
       const desiredSize = Math.min(
         validLanes.length,
-        chordSizeForEvent(difficulty, trackId, event.timeMs, event.confidence)
+        chordSizeForRhythm(
+          difficulty,
+          trackId,
+          event.timeMs,
+          event.confidence,
+          cap
+        )
       );
       if (desiredSize > 1) {
         const extras = validLanes
@@ -836,8 +816,8 @@ export function generateDeterministicChart(
     trackId,
     difficulty,
     notes: mergedSustains,
-    bpm,
-    generatorVersion: "deterministic-1.7",
+    bpm: Math.round(rhythmCtx.effectiveBpm) || bpm,
+    generatorVersion: "deterministic-1.9",
     generatedAt: new Date(),
   };
 }
@@ -981,3 +961,6 @@ export function estimateBpm(beatEvents: BeatEvent[]): number {
   const median = intervals[Math.floor(intervals.length / 2)] ?? 500;
   return Math.round(60_000 / median);
 }
+
+export type { RhythmContext } from "./rhythm.js";
+export { buildRhythmContext, inferBeatsPerMeasure, beatIndexForTime, chordCapForTime } from "./rhythm.js";

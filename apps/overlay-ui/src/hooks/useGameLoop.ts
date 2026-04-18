@@ -9,8 +9,9 @@ import {
   chartEndPlaybackMs,
   noteHeadTimeMs,
 } from "@spotifyhero/gameplay-core";
-import type { Chart } from "@spotifyhero/shared-types";
+import type { Chart, ScoreEvent } from "@spotifyhero/shared-types";
 import { playbackClock } from "../lib/playbackClock.js";
+import { calibratedPlaybackMs } from "../lib/playbackPosition.js";
 import { resumeSpotifyPlayback } from "../lib/spotifyControl.js";
 import {
   isSpotifyPlaybackTooQuietForNotes,
@@ -34,11 +35,12 @@ const AFK_MISS_THRESHOLD = 5;
  * Stops one-frame gaps / OS input jitter from failing an otherwise solid long hold.
  */
 const SUSTAIN_LANE_HELD_GRACE_MS = 55;
+/** Still a bit tighter than default, but far more forgiving than legacy expert timings. */
 const EXPERT_HIT_WINDOWS = {
-  perfect: 28,
-  great: 46,
-  good: 86,
-  bad: 128,
+  perfect: 88,
+  great: 108,
+  good: 138,
+  bad: 188,
 } as const;
 
 function allNotesResolved(engine: ScoringEngine, chart: Chart): boolean {
@@ -148,7 +150,8 @@ export function useGameLoop(): void {
   const clockSyncedTrackRef = useRef<string | null>(null);
   const chartMountPerfRef = useRef(0);
   const loopFramesForChartRef = useRef(0);
-  const sawPlayheadInChartTailRef = useRef(false);
+  /** True after we run the one-shot tail resync (lines ~343–351); not "saw tail" for results. */
+  const earlyTailResyncDoneRef = useRef(false);
   /** One-shot "impossibly past end" recovery right after chart mount (stale timeline). */
   const mountStaleResyncDoneRef = useRef(false);
   /** Consecutive tap misses while no lane keys held (manual mode AFK detection). */
@@ -182,7 +185,7 @@ export function useGameLoop(): void {
     lastPlaybackPosRef.current = null;
     chartMountPerfRef.current = performance.now();
     loopFramesForChartRef.current = 0;
-    sawPlayheadInChartTailRef.current = false;
+    earlyTailResyncDoneRef.current = false;
     mountStaleResyncDoneRef.current = false;
     consecutiveAfkMissRef.current = 0;
     chartBoundsRef.current = {
@@ -239,7 +242,7 @@ export function useGameLoop(): void {
       if (state.phase !== "manual") return;
       if (isSpotifyPlaybackTooQuietForNotes(state.playback)) return;
 
-      const pos = playbackClock.estimateMs();
+      const pos = calibratedPlaybackMs();
       const engine = engineRef.current;
       const c = state.chart;
       if (!engine || !c) return;
@@ -272,6 +275,11 @@ export function useGameLoop(): void {
       const liveChart = state.chart;
       if (!liveChart) return;
 
+      if (state.calibrationActive) {
+        rafRef.current = requestAnimationFrame(loop);
+        return;
+      }
+
       if (shouldHideNotesForQuietPlayback(state.playback, state.phase)) {
         rafRef.current = requestAnimationFrame(loop);
         return;
@@ -294,7 +302,11 @@ export function useGameLoop(): void {
       if (state.playback?.trackId !== liveChart.trackId) {
         windowManagerRef.current = null;
         engineRef.current = null;
-        useGameStore.setState({ trackLifecycle: "ending", lastScoreEvent: null });
+        useGameStore.setState({
+          trackLifecycle: "ending",
+          lastScoreEvent: null,
+          lastScoreEventBatch: null,
+        });
         return;
       }
 
@@ -303,26 +315,33 @@ export function useGameLoop(): void {
         clockSyncedTrackRef.current = liveChart.trackId;
       }
 
-      let pos = playbackClock.estimateMs();
+      let pos = calibratedPlaybackMs();
       const engine = engineRef.current;
       if (!engine) return;
 
       loopFramesForChartRef.current += 1;
 
       const { startMs, endMs } = chartBoundsRef.current;
-      const reportedDurationMs = state.playback?.track?.durationMs ?? 0;
-      const effectiveEndMs =
-        endMs > 0 && reportedDurationMs > 0
-          ? Math.min(endMs, reportedDurationMs)
-          : endMs;
+      /** Last chart event (tail) — session must not complete until playhead passes this. */
+      const chartEndMs = endMs;
+      const trackDurMs = state.playback?.track?.durationMs ?? 0;
+      /**
+       * Clamp scoring playhead so we do not judge "past" the shorter of chart vs Spotify duration.
+       * Do not use this alone for "song finished" — that caused early results when metadata duration
+       * was shorter than the generated chart.
+       */
+      const scoreClampMs =
+        chartEndMs > 0 && trackDurMs > 0
+          ? Math.min(chartEndMs, trackDurMs)
+          : chartEndMs || trackDurMs;
       const sinceChartMount =
         performance.now() - chartMountPerfRef.current;
 
       if (
-        effectiveEndMs > 0 &&
+        scoreClampMs > 0 &&
         !mountStaleResyncDoneRef.current &&
         sinceChartMount < CHART_MOUNT_STALE_MS &&
-        pos > effectiveEndMs + CHART_FINISH_PAD_MS
+        pos > scoreClampMs + CHART_FINISH_PAD_MS
       ) {
         mountStaleResyncDoneRef.current = true;
         syncClockToStorePlayback(liveChart);
@@ -334,20 +353,17 @@ export function useGameLoop(): void {
       }
 
       if (
-        effectiveEndMs > 0 &&
-        !sawPlayheadInChartTailRef.current &&
-        pos > effectiveEndMs &&
+        scoreClampMs > 0 &&
+        !earlyTailResyncDoneRef.current &&
+        pos > scoreClampMs &&
         loopFramesForChartRef.current <= 90
       ) {
         syncClockToStorePlayback(liveChart);
-        pos = playbackClock.estimateMs();
+        pos = calibratedPlaybackMs();
+        earlyTailResyncDoneRef.current = true;
       }
 
-      if (effectiveEndMs <= 0 || pos <= effectiveEndMs) {
-        sawPlayheadInChartTailRef.current = true;
-      }
-
-      const boundedPos = Math.min(Math.max(pos, startMs), effectiveEndMs || pos);
+      const boundedPos = Math.min(Math.max(pos, startMs), scoreClampMs || pos);
 
       const prev = lastPlaybackPosRef.current;
       lastPlaybackPosRef.current = boundedPos;
@@ -377,6 +393,7 @@ export function useGameLoop(): void {
           })();
 
       const noteCount = liveChart.notes.length;
+      const scoreFrame: ScoreEvent[] = [];
 
       if (playModeRef.current.isAutoplay()) {
         if (!usedAutoplayRef.current) {
@@ -390,7 +407,7 @@ export function useGameLoop(): void {
             if (!engine.isResolved(index)) {
               const event = engine.onNoteHit(index, boundedPos);
               if (event) {
-                useGameStore.getState().onScoreEvent(event, noteCount);
+                scoreFrame.push(event);
               }
             }
           }
@@ -399,7 +416,7 @@ export function useGameLoop(): void {
 
       const holdEvents = engine.advanceHolds(boundedPos, laneHeld);
       for (const ev of holdEvents) {
-        useGameStore.getState().onScoreEvent(ev, noteCount);
+        scoreFrame.push(ev);
         if (
           playModeRef.current.isAutoplay() === false &&
           ev.judgement !== "miss"
@@ -410,14 +427,18 @@ export function useGameLoop(): void {
 
       const missed = engine.evaluateMisses(boundedPos);
       for (const event of missed) {
-        useGameStore.getState().onScoreEvent(event, noteCount);
+        scoreFrame.push(event);
+      }
+
+      if (scoreFrame.length > 0) {
+        useGameStore.getState().onScoreEvents(scoreFrame, noteCount);
       }
 
       if (!playModeRef.current.isAutoplay()) {
         if (lanesHeldRef.current.some(Boolean)) {
           consecutiveAfkMissRef.current = 0;
         } else if (
-          notesScrollingRegion(boundedPos, effectiveEndMs, liveChart.notes.length)
+          notesScrollingRegion(boundedPos, scoreClampMs, liveChart.notes.length)
         ) {
           for (const ev of missed) {
             if (ev.judgement !== "miss") continue;
@@ -437,14 +458,16 @@ export function useGameLoop(): void {
         consecutiveAfkMissRef.current = 0;
       }
 
-      const pastChartFinish =
-        effectiveEndMs > 0 && pos >= effectiveEndMs;
+      /** Playhead has left the chart span (Spotify may cap earlier than chartEnd if metadata mismatches). */
+      const playheadPastChartEnd =
+        chartEndMs > 0 &&
+        (pos >= chartEndMs ||
+          (trackDurMs > 0 && chartEndMs > trackDurMs && pos >= trackDurMs - 150));
       const canFinishResults =
-        sawPlayheadInChartTailRef.current ||
-        (loopFramesForChartRef.current > FINISH_STALE_WAIT_FRAMES &&
-          allNotesResolved(engine, liveChart));
+        loopFramesForChartRef.current > FINISH_STALE_WAIT_FRAMES &&
+        allNotesResolved(engine, liveChart);
 
-      if (pastChartFinish && canFinishResults) {
+      if (playheadPastChartEnd && canFinishResults) {
         useGameStore.setState({ trackLifecycle: "ending" });
         const currentState = useGameStore.getState();
         const displayName = currentState.spotifyUser?.displayName?.trim();

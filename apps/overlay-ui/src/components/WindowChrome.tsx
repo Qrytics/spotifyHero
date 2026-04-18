@@ -79,6 +79,9 @@ export function WindowChrome(): React.ReactElement | null {
         background: "var(--surface)",
         borderBottom: "1px solid #222",
         cursor: "default",
+        position: "relative",
+        /** Above fullscreen overlays (calibration, settings) so the strip stays draggable. */
+        zIndex: 10050,
       }}
       onMouseDown={onChromeMouseDown}
     >

@@ -149,6 +149,16 @@ export const BeatEventSchema = z.object({
   amplitude: z.number().min(0).max(1).optional(),
   /** Optional frame RMS energy (0-1). */
   rms: z.number().min(0).max(1).optional(),
+  /**
+   * Estimated fundamental frequency (Hz) when the analysis pipeline provides it.
+   * Large step-to-step changes imply melodic motion — chart generator boosts fast runs.
+   */
+  pitchHz: z.number().positive().optional(),
+  /**
+   * Normalized spectral flux / transient strength (0–1). Peaks align with note attacks
+   * and rapid passages even without pitch.
+   */
+  spectralFlux: z.number().min(0).max(1).optional(),
   isBeat: z.boolean(),
   isOnset: z.boolean(),
 });
@@ -182,6 +192,11 @@ export const AppSettingsSchema = z.object({
   window: WindowSettingsSchema.default({}),
   /** >1 = faster scrolling (shorter lookahead window). ~0.45–5. */
   noteScrollSpeed: z.number().min(0.45).max(5).default(1),
+  /**
+   * Added to Spotify playhead time for hits & highway (ms). Negative = chart earlier vs reported position.
+   * Set via timing calibrator or manually.
+   */
+  playbackTimingOffsetMs: z.number().int().min(-500).max(500).default(0),
   difficulty: DifficultySchema.default("medium"),
   /** When true, new charts start in autoplay; press play key to switch to manual. */
   autoplay: z.boolean().default(false),

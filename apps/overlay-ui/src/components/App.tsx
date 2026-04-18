@@ -12,6 +12,7 @@ import { useKeybinds } from "../hooks/useKeybinds.js";
 import { useSpotifyProfileSync } from "../hooks/useSpotifyProfileSync.js";
 import { SpotifyDiagnosticsPanel } from "./SpotifyDiagnosticsPanel.js";
 import { SettingsPanel } from "./SettingsPanel.js";
+import { OffsetCalibrator } from "./OffsetCalibrator.js";
 import { WindowChrome } from "./WindowChrome.js";
 import { loadTauriAppSettings } from "../lib/tauriSettings.js";
 import { LeaderboardPanel } from "./LeaderboardPanel.js";
@@ -26,6 +27,7 @@ export function App(): React.ReactElement {
   const settings = useGameStore((s) => s.settings);
   const usedAutoplayThisRound = useGameStore((s) => s.usedAutoplayThisRound);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [calibratorOpen, setCalibratorOpen] = useState(false);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
 
@@ -42,6 +44,7 @@ export function App(): React.ReactElement {
       if (!tauriSettings) return;
       useGameStore.getState().updateSettings({
         noteScrollSpeed: tauriSettings.noteScrollSpeed,
+        playbackTimingOffsetMs: tauriSettings.playbackTimingOffsetMs,
       });
     })();
   }, []);
@@ -132,7 +135,18 @@ export function App(): React.ReactElement {
         session={session}
         eligibleForRanking={leaderboardEligibleForRanking}
       />
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onOpenCalibrator={() => {
+          setSettingsOpen(false);
+          setCalibratorOpen(true);
+        }}
+      />
+      <OffsetCalibrator
+        open={calibratorOpen}
+        onClose={() => setCalibratorOpen(false)}
+      />
       <SpotifyDiagnosticsPanel />
     </div>
   );

@@ -8,9 +8,14 @@ const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard", "expert"];
 type Props = {
   open: boolean;
   onClose: () => void;
+  onOpenCalibrator?: () => void;
 };
 
-export function SettingsPanel({ open, onClose }: Props): React.ReactElement | null {
+export function SettingsPanel({
+  open,
+  onClose,
+  onOpenCalibrator,
+}: Props): React.ReactElement | null {
   const settings = useGameStore((s) => s.settings);
   const updateSettings = useGameStore((s) => s.updateSettings);
 
@@ -222,6 +227,60 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
           <span style={{ fontSize: "8px", color: "#666", marginTop: "2px", display: "block" }}>
             Higher = notes move faster toward the hit line.
           </span>
+        </div>
+
+        <div>
+          <label style={labelStyle}>Hit timing offset (ms)</label>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <input
+              type="range"
+              style={{ flex: 1, minWidth: 0 }}
+              min={-500}
+              max={500}
+              step={5}
+              value={draft.playbackTimingOffsetMs}
+              onChange={(e) =>
+                set("playbackTimingOffsetMs")(Number.parseInt(e.target.value, 10))
+              }
+            />
+            <span
+              style={{
+                fontSize: "10px",
+                fontWeight: 700,
+                color: "var(--accent)",
+                width: "44px",
+                flexShrink: 0,
+              }}
+            >
+              {draft.playbackTimingOffsetMs >= 0 ? "+" : ""}
+              {draft.playbackTimingOffsetMs}
+            </span>
+          </div>
+          <span style={{ fontSize: "8px", color: "#666", marginTop: "2px", display: "block" }}>
+            Negative = chart slightly earlier. Use the wizard for automatic setup.
+          </span>
+          {onOpenCalibrator && (
+            <button
+              type="button"
+              onClick={() => {
+                onOpenCalibrator();
+              }}
+              style={{
+                marginTop: "8px",
+                width: "100%",
+                padding: "6px 8px",
+                borderRadius: "6px",
+                border: "1px solid var(--accent)",
+                background: "transparent",
+                color: "var(--accent)",
+                fontWeight: 600,
+                fontSize: "10px",
+                cursor: "pointer",
+              }}
+            >
+              Calibrate timing…
+            </button>
+          )}
         </div>
 
         <label

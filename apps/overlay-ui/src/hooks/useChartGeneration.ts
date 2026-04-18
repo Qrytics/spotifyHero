@@ -3,14 +3,6 @@ import { HybridChartGenerator } from "@spotifyhero/chart-generator";
 import type { BeatEvent, SpotifyTrack } from "@spotifyhero/shared-types";
 import { useGameStore } from "../store/gameStore.js";
 
-function hashTrackId(id: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < id.length; i++) {
-    h = Math.imul(h ^ id.charCodeAt(i), 16777619);
-  }
-  return h >>> 0;
-}
-
 /**
  * Builds a beat/onset grid when no Spotify beat analysis exists.
  * Quarter / eighth / sixteenth subdivisions with descending confidence so the
@@ -18,15 +10,21 @@ function hashTrackId(id: string): number {
  * Coincident times keep the highest-confidence event.
  */
 function demoBeatEvents(track: SpotifyTrack): { events: BeatEvent[]; bpm: number } {
+  /** Spotify Audio Features tempo (filled by Tauri); fallback only if unavailable. */
   const bpm = track.bpm ?? 120;
   const beatMs = 60_000 / bpm;
-  const phase = hashTrackId(track.id) % Math.max(1, Math.floor(beatMs));
+  /** Align grid to song start (t=0). Random phase made charts feel off-beat vs the music. */
+  const phase = 0;
   const eighth = beatMs / 2;
   const sixteenth = beatMs / 4;
 
   const byTime = new Map<number, BeatEvent>();
 
-  const add = (timeMs: number, confidence: number): void => {
+  const add = (
+    timeMs: number,
+    confidence: number,
+    role: { beat: boolean; onset: boolean }
+  ): void => {
     const k = Math.round(timeMs);
     if (k < 0 || k >= track.durationMs) return;
     const prev = byTime.get(k);
@@ -34,26 +32,46 @@ function demoBeatEvents(track: SpotifyTrack): { events: BeatEvent[]; bpm: number
       byTime.set(k, {
         timeMs: k,
         confidence,
-        isBeat: true,
-        isOnset: true,
+        isBeat: role.beat,
+        isOnset: role.onset,
       });
     }
   };
 
+  /** Quarter-note pulse — defines the beat grid / time signature feel for the generator. */
   for (let t = phase; t < track.durationMs; t += beatMs) {
-    add(t, 0.94);
+    add(t, 0.94, { beat: true, onset: true });
   }
+  /** Eighth / sixteenth — onsets only; per-beat onset counts become 2–4+ for density & chords. */
   for (let t = phase; t < track.durationMs; t += eighth) {
-    add(t, 0.71);
+    add(t, 0.71, { beat: false, onset: true });
   }
   let sixIdx = 0;
   for (let t = phase; t < track.durationMs; t += sixteenth, sixIdx++) {
     if (sixIdx % 2 === 1) continue;
-    add(t, 0.34);
+    add(t, 0.34, { beat: false, onset: true });
   }
 
   const events = [...byTime.values()].sort((a, b) => a.timeMs - b.timeMs);
-  return { events, bpm };
+  /**
+   * Demo-only melodic features so the chart generator can exercise pitch / flux paths before
+   * the real analysis pipeline supplies `pitchHz` + `spectralFlux` per onset.
+   */
+  const a4 = 440;
+  const withFeatures = events.map((e) => {
+    const stepIdx = Math.floor(e.timeMs / Math.max(35, sixteenth * 0.2));
+    const semi = ((stepIdx % 19) - 9) * 0.85;
+    const pitchHz = a4 * 2 ** (semi / 12);
+    const spectralFlux = e.isBeat
+      ? 0.58 + 0.25 * (e.confidence - 0.5)
+      : 0.12 + 0.55 * Math.abs(Math.sin(e.timeMs / 180));
+    return {
+      ...e,
+      pitchHz,
+      spectralFlux: Math.min(1, Math.max(0.04, spectralFlux)),
+    };
+  });
+  return { events: withFeatures, bpm };
 }
 
 /**

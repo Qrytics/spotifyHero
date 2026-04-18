@@ -39,6 +39,7 @@ export function useKeybinds(): void {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
+      if (useGameStore.getState().calibrationActive) return;
       const targetEl = e.target as HTMLElement | null;
       if (
         targetEl?.closest?.("input, textarea, select, [contenteditable=true]")
@@ -81,6 +82,7 @@ export function useKeybinds(): void {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
+      if (useGameStore.getState().calibrationActive) return;
       const targetEl = e.target as HTMLElement | null;
       if (
         targetEl?.closest?.("input, textarea, select, [contenteditable=true]")

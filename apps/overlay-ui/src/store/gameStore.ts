@@ -16,6 +16,7 @@ export type SpotifyUserProfile = {
 };
 import type { PlayMode } from "@spotifyhero/gameplay-core";
 import { saveTauriAppSettings } from "../lib/tauriSettings.js";
+import { playHitFinishSfx } from "../lib/hitSound.js";
 
 const SETTINGS_STORAGE_KEY = "spotifyHero_settings_v1";
 
@@ -93,21 +94,30 @@ interface GameState {
   maxCombo: number;
   accuracy: number;
   lastScoreEvent: ScoreEvent | null;
+  /** Last `onScoreEvents` payload — highway applies visibility for every event in one store tick. */
+  lastScoreEventBatch: readonly ScoreEvent[] | null;
+  /** Bumps when `lastScoreEventBatch` changes so subscribers avoid string compares. */
+  scoreEventSeq: number;
   session: GameSession | null;
   usedAutoplayThisRound: boolean;
   /** From Tauri `get_spotify_user_profile` — drive name + leaderboard `spotify_user_id`. */
   spotifyUser: SpotifyUserProfile | null;
+  /** True while timing calibrator is open — pauses scoring loop and lane keybinds. */
+  calibrationActive: boolean;
 
   // Actions
   setPhase: (phase: GamePhase) => void;
   setPlayback: (state: PlaybackState) => void;
   setChart: (chart: Chart) => void;
   onScoreEvent: (event: ScoreEvent, totalNotes: number) => void;
+  /** Apply many scoring events in one `set()` — fewer React re-renders per frame than repeated `onScoreEvent`. */
+  onScoreEvents: (events: readonly ScoreEvent[], totalNotes: number) => void;
   setSession: (session: GameSession) => void;
   togglePlayMode: () => PlayMode;
   resetRound: () => void;
   updateSettings: (patch: Partial<AppSettings>) => void;
   setSpotifyUser: (user: SpotifyUserProfile | null) => void;
+  setCalibrationActive: (active: boolean) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,9 +140,14 @@ export const useGameStore = create<GameState>((set, get) => ({
   maxCombo: 0,
   accuracy: 1,
   lastScoreEvent: null,
+  lastScoreEventBatch: null,
+  scoreEventSeq: 0,
   session: null,
   usedAutoplayThisRound: false,
   spotifyUser: null,
+  calibrationActive: false,
+
+  setCalibrationActive: (active) => set({ calibrationActive: active }),
 
   setPhase: (phase) => {
     const trackLifecycle: TrackLifecycleState =
@@ -195,6 +210,8 @@ export const useGameStore = create<GameState>((set, get) => ({
         maxCombo: 0,
         accuracy: 1,
         lastScoreEvent: null,
+        lastScoreEventBatch: null,
+        scoreEventSeq: 0,
         session: null,
         usedAutoplayThisRound: false,
         sessionPlayMode: inherit,
@@ -244,27 +261,47 @@ export const useGameStore = create<GameState>((set, get) => ({
       };
     }),
 
-  onScoreEvent: (event, totalNotes) =>
-    set((state) => {
-      const currentTrackId = state.chart?.trackId;
-      const playbackTrackId = state.playback?.trackId ?? null;
-      if (!currentTrackId || playbackTrackId !== currentTrackId) {
-        return state;
+  onScoreEvent: (event, totalNotes) => {
+    get().onScoreEvents([event], totalNotes);
+  },
+
+  onScoreEvents: (events, _totalNotes) => {
+    if (events.length === 0) return;
+    const st = get();
+    const currentTrackId = st.chart?.trackId;
+    const playbackTrackId = st.playback?.trackId ?? null;
+    if (!currentTrackId || playbackTrackId !== currentTrackId) {
+      return;
+    }
+    if (st.phase !== "autoplay") {
+      for (const e of events) {
+        playHitFinishSfx(e);
       }
-      const pts = Number(event.pointsAwarded);
-      const awarded = Number.isFinite(pts) ? pts : 0;
-      const nextScore =
-        event.judgement !== "miss" ? state.score + awarded : state.score;
-      const combo = Number.isFinite(event.combo) ? event.combo : 0;
-      const maxCombo = Math.max(state.maxCombo, combo);
+    }
+    set((state) => {
+      let score = state.score;
+      let combo = state.combo;
+      let maxCombo = state.maxCombo;
+      for (const event of events) {
+        const pts = Number(event.pointsAwarded);
+        const awarded = Number.isFinite(pts) ? pts : 0;
+        score = event.judgement !== "miss" ? score + awarded : score;
+        const c = Number.isFinite(event.combo) ? event.combo : 0;
+        combo = c;
+        maxCombo = Math.max(maxCombo, c);
+      }
+      const last = events[events.length - 1]!;
       return {
-        score: nextScore,
+        score,
         combo,
         maxCombo,
         accuracy: state.accuracy,
-        lastScoreEvent: event,
+        lastScoreEvent: last,
+        lastScoreEventBatch: events,
+        scoreEventSeq: state.scoreEventSeq + 1,
       };
-    }),
+    });
+  },
 
   setSession: (session) =>
     set({ session, phase: "results", trackLifecycle: "ending", countdownUntilMs: null }),
@@ -288,6 +325,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       maxCombo: 0,
       accuracy: 1,
       lastScoreEvent: null,
+      lastScoreEventBatch: null,
+      scoreEventSeq: 0,
       session: null,
       usedAutoplayThisRound: false,
       chart: null,
@@ -306,6 +345,42 @@ export const useGameStore = create<GameState>((set, get) => ({
           ...patch,
         })
       );
+
+      const difficultyRegen =
+        patch.difficulty !== undefined &&
+        patch.difficulty !== state.settings.difficulty &&
+        state.chart !== null &&
+        state.playback?.trackId != null &&
+        state.chart.trackId === state.playback.trackId &&
+        (state.phase === "autoplay" ||
+          state.phase === "manual" ||
+          state.phase === "paused");
+
+      let regenPatch: Partial<GameState> = {};
+      if (difficultyRegen) {
+        let inherit: "autoplay" | "manual" | null = null;
+        if (state.phase === "autoplay" || state.phase === "manual") {
+          inherit = state.phase;
+        } else if (state.phase === "paused") {
+          inherit = state.lastPlayPhase;
+        }
+        regenPatch = {
+          phase: "loading",
+          trackLifecycle: "loading",
+          chart: null,
+          score: 0,
+          combo: 0,
+          maxCombo: 0,
+          accuracy: 1,
+          lastScoreEvent: null,
+          lastScoreEventBatch: null,
+          scoreEventSeq: 0,
+          session: null,
+          usedAutoplayThisRound: false,
+          sessionPlayMode: inherit,
+        };
+      }
+
       try {
         localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings));
       } catch {
@@ -313,9 +388,11 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
       void saveTauriAppSettings({
         noteScrollSpeed: settings.noteScrollSpeed,
+        playbackTimingOffsetMs: settings.playbackTimingOffsetMs,
       });
       return {
         settings,
+        ...regenPatch,
         ...(patch.autoplay !== undefined
           ? {
               lastPlayPhase: settings.autoplay ? "autoplay" : "manual",

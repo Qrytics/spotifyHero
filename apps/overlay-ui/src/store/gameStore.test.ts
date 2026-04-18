@@ -28,6 +28,8 @@ function resetStore(): void {
     maxCombo: 0,
     accuracy: 1,
     lastScoreEvent: null,
+    lastScoreEventBatch: null,
+    scoreEventSeq: 0,
     session: null,
   });
 }
@@ -91,5 +93,49 @@ describe("gameStore setPlayback chart reload gating", () => {
     expect(state.trackLifecycle).toBe("loading");
     expect(state.chart).toBeNull();
     expect(state.sessionPlayMode).toBe("manual");
+  });
+});
+
+describe("gameStore updateSettings difficulty regen", () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  it("enters loading and clears chart when difficulty changes mid-session", () => {
+    const chart = makeChart("track-a");
+    chart.difficulty = "medium";
+    useGameStore.setState({
+      chart,
+      phase: "manual",
+      playback: playback({ isPlaying: true, positionMs: 5000, trackId: "track-a" }),
+      lastPlayPhase: "manual",
+      score: 1200,
+      combo: 5,
+    });
+
+    useGameStore.getState().updateSettings({ difficulty: "hard" });
+
+    const state = useGameStore.getState();
+    expect(state.phase).toBe("loading");
+    expect(state.trackLifecycle).toBe("loading");
+    expect(state.chart).toBeNull();
+    expect(state.score).toBe(0);
+    expect(state.sessionPlayMode).toBe("manual");
+    expect(state.settings.difficulty).toBe("hard");
+  });
+
+  it("does not regen when difficulty is unchanged", () => {
+    const chart = makeChart("track-a");
+    useGameStore.setState({
+      chart,
+      phase: "manual",
+      playback: playback({ isPlaying: true, positionMs: 1000, trackId: "track-a" }),
+    });
+    const d = useGameStore.getState().settings.difficulty;
+
+    useGameStore.getState().updateSettings({ difficulty: d });
+
+    expect(useGameStore.getState().chart).toBe(chart);
+    expect(useGameStore.getState().phase).toBe("manual");
   });
 });

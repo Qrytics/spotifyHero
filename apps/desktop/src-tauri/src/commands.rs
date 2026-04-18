@@ -1,7 +1,7 @@
 use crate::spotify::{
-    clear_tokens, ensure_access_token, fetch_current_playback, fetch_current_user,
-    fetch_followed_user_ids, idle_playback, load_store, run_login, spotify_client_id,
-    PlaybackStatePayload, SpotifyUserPayload,
+    audio_features::ensure_track_tempo, clear_tokens, ensure_access_token,
+    fetch_current_playback, fetch_current_user, fetch_followed_user_ids, idle_playback,
+    load_store, run_login, spotify_client_id, PlaybackStatePayload, SpotifyUserPayload,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -99,6 +99,8 @@ pub struct SpotifyConnectionStatus {
 #[serde(rename_all = "camelCase")]
 pub struct AppSettingsPayload {
     pub note_scroll_speed: f64,
+    #[serde(default)]
+    pub playback_timing_offset_ms: i32,
 }
 
 #[command]
@@ -122,7 +124,10 @@ pub async fn get_playback_state(app: tauri::AppHandle) -> Result<PlaybackStatePa
     };
 
     match fetch_current_playback(http, &access).await {
-        Ok(p) => Ok(p),
+        Ok(mut p) => {
+            ensure_track_tempo(http, &access, &mut p).await;
+            Ok(p)
+        }
         Err(e) if e == "unauthorized" => {
             if let Ok(store) = load_store(&app) {
                 let _ = clear_tokens(store.as_ref());
@@ -204,7 +209,14 @@ pub async fn load_app_settings(app: tauri::AppHandle) -> Result<AppSettingsPaylo
         .get("note_scroll_speed")
         .and_then(|v| v.as_f64())
         .unwrap_or(defaults.note_scroll_speed);
-    Ok(AppSettingsPayload { note_scroll_speed })
+    let playback_timing_offset_ms = store
+        .get("playback_timing_offset_ms")
+        .and_then(|v| v.as_i64().map(|n| n.clamp(-500, 500) as i32))
+        .unwrap_or(0);
+    Ok(AppSettingsPayload {
+        note_scroll_speed,
+        playback_timing_offset_ms,
+    })
 }
 
 #[command]
@@ -216,5 +228,9 @@ pub async fn save_app_settings(
         .build()
         .map_err(|e| e.to_string())?;
     store.set("note_scroll_speed", serde_json::json!(payload.note_scroll_speed));
+    store.set(
+        "playback_timing_offset_ms",
+        serde_json::json!(payload.playback_timing_offset_ms),
+    );
     store.save().map_err(|e| e.to_string())
 }

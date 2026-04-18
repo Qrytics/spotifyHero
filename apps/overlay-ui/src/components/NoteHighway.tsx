@@ -1,12 +1,12 @@
 import React, { useRef, useEffect } from "react";
-import type { Judgement, Note } from "@spotifyhero/shared-types";
+import type { Chart, Judgement, Note, ScoreEvent } from "@spotifyhero/shared-types";
 import {
   CHART_LEAD_IN_MS,
   noteHeadTimeMs,
   noteTailTimeMs,
 } from "@spotifyhero/gameplay-core";
 import { useGameStore } from "../store/gameStore.js";
-import { playbackClock } from "../lib/playbackClock.js";
+import { calibratedPlaybackMs } from "../lib/playbackPosition.js";
 import { shouldHideNotesForQuietPlayback } from "../lib/playbackVolumeGate.js";
 
 /**
@@ -42,12 +42,13 @@ const SCROLL_IN_EXTRA_MS = SCROLL_IN_ABOVE_MS + SCROLL_IN_STUTTER_MS;
 
 const PLAYABLE_PHASES = new Set(["autoplay", "manual", "paused"]);
 
+/** Reused when chart has no notes — avoids allocating a new Set each frame. */
+const EMPTY_OCCLUDED: ReadonlySet<number> = new Set();
+
 const HIT_FX_MS = 480;
 const HIT_RING_EXPANSION = 14;
 /** Past this Y (CSS px) the note is considered off-screen downward. */
 const OFF_SCREEN_BOTTOM_PAD = 24;
-/** Only clear hold strips after musical tail + buffer (never geometry-only — that hid active sustains). */
-const HOLD_STRIP_GHOST_SWEEP_MS = 520;
 /** Small temporal epsilon to avoid precision edge-cases around sustain tails. */
 const TIME_EPSILON_MS = 0.01;
 
@@ -183,7 +184,19 @@ function paintSustainBodyPath(
   ctx.roundRect(x, top, bodyW, h, radii);
 }
 
-export function NoteHighway(): React.ReactElement {
+/** Sustain strip stays until the tail scrolls past the bottom edge (not a fixed ms after note end). */
+function isSustainTailPastCanvasBottom(
+  hitLineY: number,
+  pxPerMs: number,
+  tailTimeMs: number,
+  positionMs: number,
+  height: number
+): boolean {
+  const cyTail = yFromTime(hitLineY, pxPerMs, tailTimeMs, positionMs);
+  return cyTail > height + OFF_SCREEN_BOTTOM_PAD;
+}
+
+const NoteHighwayInner = (): React.ReactElement => {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chart = useGameStore((s) => s.chart);
@@ -191,32 +204,39 @@ export function NoteHighway(): React.ReactElement {
   const dimsRef = useRef({ cssW: -1, cssH: -1 });
   const staticRef = useRef<{ key: string; off: HTMLCanvasElement } | null>(null);
   const sortedNotesRef = useRef<readonly SortedNote[]>([]);
+  /** Occlusion depends only on chart geometry — recomputed when sorted notes refresh, not every rAF. */
+  const occludedRef = useRef<ReadonlySet<number>>(EMPTY_OCCLUDED);
 
   useEffect(() => {
     if (!chart?.notes) {
       sortedNotesRef.current = [];
+      occludedRef.current = EMPTY_OCCLUDED;
       return;
     }
     const raw = chart.notes;
     if (raw.length === 0) {
       sortedNotesRef.current = [];
+      occludedRef.current = EMPTY_OCCLUDED;
       return;
     }
     const withIdx = raw.map((note, chartIndex) => ({ note, chartIndex }));
+    let sortedNotes: readonly SortedNote[];
     if (raw.length === 1) {
-      sortedNotesRef.current = withIdx;
-      return;
-    }
-    let sorted = true;
-    for (let i = 1; i < raw.length; i++) {
-      if (raw[i]!.timeMs < raw[i - 1]!.timeMs) {
-        sorted = false;
-        break;
+      sortedNotes = withIdx;
+    } else {
+      let sorted = true;
+      for (let i = 1; i < raw.length; i++) {
+        if (raw[i]!.timeMs < raw[i - 1]!.timeMs) {
+          sorted = false;
+          break;
+        }
       }
+      sortedNotes = sorted
+        ? withIdx
+        : [...withIdx].sort((a, b) => a.note.timeMs - b.note.timeMs);
     }
-    sortedNotesRef.current = sorted
-      ? withIdx
-      : [...withIdx].sort((a, b) => a.note.timeMs - b.note.timeMs);
+    sortedNotesRef.current = sortedNotes;
+    occludedRef.current = occludedInsideSustain(sortedNotes, CHART_LEAD_IN_MS);
   }, [chart]);
 
   useEffect(() => {
@@ -230,7 +250,6 @@ export function NoteHighway(): React.ReactElement {
     if (!ctx) return;
 
     const hitEffects: HitFx[] = [];
-    let lastEventSig = "";
     const receptorPress: ReceptorPressState[] = Array.from({ length: LANE_COUNT }, () => ({
       isDown: false,
       downAt: -Infinity,
@@ -243,13 +262,8 @@ export function NoteHighway(): React.ReactElement {
       missSlide: new Set(),
     };
 
-    const unsubHits = useGameStore.subscribe((state) => {
-      const ev = state.lastScoreEvent;
-      const ch = state.chart;
-      if (!ev || !ch?.notes[ev.noteIndex]) return;
-      const sig = `${ev.noteIndex}:${ev.judgement}:${ev.pointsAwarded}:${ev.combo}:${ev.deltaMs}:${ev.showHitFx ?? ""}:${ev.countsTowardAccuracy ?? ""}`;
-      if (sig === lastEventSig) return;
-      lastEventSig = sig;
+    const applyOneScoreEvent = (ev: ScoreEvent, ch: Chart): void => {
+      if (!ch.notes[ev.noteIndex]) return;
       const note = ch.notes[ev.noteIndex]!;
       const lane = note.lane;
 
@@ -311,6 +325,17 @@ export function NoteHighway(): React.ReactElement {
         headHidden: true,
       });
       visibility.missSlide.delete(idx);
+    };
+
+    const unsubHits = useGameStore.subscribe((state, prev) => {
+      if (state.scoreEventSeq === prev.scoreEventSeq) return;
+      const batch = state.lastScoreEventBatch;
+      if (!batch?.length) return;
+      const ch = state.chart;
+      if (!ch) return;
+      for (const ev of batch) {
+        applyOneScoreEvent(ev, ch);
+      }
     });
 
     const onLaneDown = (ev: Event): void => {
@@ -404,7 +429,7 @@ export function NoteHighway(): React.ReactElement {
       if (!dim || dim.lw < 2 || dim.lh < 2) return;
 
       const { dpr, lw, lh } = dim;
-      const pos = playbackClock.estimateMs();
+      const pos = calibratedPlaybackMs();
 
       const off = rebuildStatic(lw, lh, canvas.width, canvas.height, dpr, c.trackId);
 
@@ -423,6 +448,7 @@ export function NoteHighway(): React.ReactElement {
       const notesToPaint = shouldHideNotesForQuietPlayback(state.playback, state.phase)
         ? []
         : sorted;
+      const nowFx = performance.now();
       paintNotes(
         ctx,
         notesToPaint,
@@ -431,10 +457,11 @@ export function NoteHighway(): React.ReactElement {
         lw,
         lh,
         visibility,
-        lookAheadEffective
+        lookAheadEffective,
+        occludedRef.current
       );
-      paintReceptorPressGlow(ctx, lw, lh, receptorPress, performance.now());
-      paintHitEffects(ctx, lw, lh, hitEffects, performance.now());
+      paintReceptorPressGlow(ctx, lw, lh, receptorPress, nowFx);
+      paintHitEffects(ctx, lw, lh, hitEffects, nowFx);
     };
 
     dimsRef.current = { cssW: -1, cssH: -1 };
@@ -455,7 +482,6 @@ export function NoteHighway(): React.ReactElement {
       staticRef.current = null;
       dimsRef.current = { cssW: -1, cssH: -1 };
       hitEffects.length = 0;
-      lastEventSig = "";
       visibility.goneTap.clear();
       visibility.activeSustains.clear();
       visibility.missSlide.clear();
@@ -471,6 +497,7 @@ export function NoteHighway(): React.ReactElement {
         minHeight: 0,
         position: "relative",
         overflow: "hidden",
+        contain: "strict",
       }}
     >
       <canvas
@@ -483,7 +510,9 @@ export function NoteHighway(): React.ReactElement {
       />
     </div>
   );
-}
+};
+
+export const NoteHighway = React.memo(NoteHighwayInner);
 
 function paintStatic(ctx: CanvasRenderingContext2D, width: number, height: number): void {
   const laneWidth = width / LANE_COUNT;
@@ -549,13 +578,13 @@ function paintNotes(
   width: number,
   height: number,
   vis: NoteVisibility,
-  lookAheadMs: number
+  lookAheadMs: number,
+  occluded: ReadonlySet<number>
 ): void {
   const n = sortedNotes.length;
   if (n === 0) return;
 
   const L = CHART_LEAD_IN_MS;
-  const occluded = occludedInsideSustain(sortedNotes, L);
 
   const laneWidth = width / LANE_COUNT;
   const hitLineY = hitLineYFromHeight(height);
@@ -565,10 +594,22 @@ function paintNotes(
   const tHigh = positionMs + lookAheadMs + SCROLL_IN_EXTRA_MS;
   let i = lowerBoundSortedTime(sortedNotes, tLow - L);
   while (i > 0) {
-    const prev = sortedNotes[i - 1]!.note;
+    const prevSn = sortedNotes[i - 1]!;
+    const prev = prevSn.note;
     const prevEnd = noteTailTimeMs(prev, L);
-    if (prevEnd >= tLow) i -= 1;
-    else break;
+    if (prevEnd >= tLow) {
+      i -= 1;
+      continue;
+    }
+    if (
+      prev.durationMs > 0 &&
+      vis.activeSustains.has(prevSn.chartIndex) &&
+      !isSustainTailPastCanvasBottom(hitLineY, pxPerMs, prevEnd, positionMs, height)
+    ) {
+      i -= 1;
+      continue;
+    }
+    break;
   }
   ctx.lineWidth = 2;
   ctx.strokeStyle = "rgba(255,255,255,0.42)";
@@ -577,14 +618,23 @@ function paintNotes(
     const { note, chartIndex } = sortedNotes[i]!;
     if (vis.goneTap.has(chartIndex)) continue;
     if (vis.missSlide.has(chartIndex)) continue;
-    if (occluded.has(chartIndex)) continue;
+    if (occluded.has(chartIndex) && !vis.activeSustains.has(chartIndex)) continue;
 
     const headT = noteHeadTimeMs(note, L);
     const endMs = noteTailTimeMs(note, L);
 
     if (headT > tHigh + TIME_EPSILON_MS) break;
 
-    if (endMs < tLow - TIME_EPSILON_MS) continue;
+    if (endMs < tLow - TIME_EPSILON_MS) {
+      const activeHold =
+        note.durationMs > 0 && vis.activeSustains.has(chartIndex);
+      if (
+        !activeHold ||
+        isSustainTailPastCanvasBottom(hitLineY, pxPerMs, endMs, positionMs, height)
+      ) {
+        continue;
+      }
+    }
 
     const timeUntil = headT - positionMs;
     const lane = note.lane;
@@ -636,13 +686,21 @@ function paintNotes(
 
   ctx.globalAlpha = 1;
 
-  for (const [idx, sustain] of [...vis.activeSustains.entries()]) {
+  for (const [idx, sustain] of vis.activeSustains) {
     const note = chartNotes[idx];
     if (!note || note.durationMs <= 0) {
       vis.activeSustains.delete(idx);
       continue;
     }
-    if (positionMs >= sustain.endTime + HOLD_STRIP_GHOST_SWEEP_MS - TIME_EPSILON_MS) {
+    if (
+      isSustainTailPastCanvasBottom(
+        hitLineY,
+        pxPerMs,
+        sustain.endTime,
+        positionMs,
+        height
+      )
+    ) {
       vis.activeSustains.delete(idx);
     }
   }
@@ -654,8 +712,7 @@ function paintNotes(
     width,
     height,
     vis.missSlide,
-    lookAheadMs,
-    occluded
+    lookAheadMs
   );
 }
 
@@ -701,8 +758,7 @@ function paintMissSlidingNotes(
   width: number,
   height: number,
   missSlide: Set<number>,
-  lookAheadMs: number,
-  occludedInsideParent: ReadonlySet<number>
+  lookAheadMs: number
 ): void {
   if (missSlide.size === 0) return;
 
@@ -712,10 +768,6 @@ function paintMissSlidingNotes(
   const toRemove: number[] = [];
 
   for (const idx of missSlide) {
-    if (occludedInsideParent.has(idx)) {
-      toRemove.push(idx);
-      continue;
-    }
     const note = notes[idx];
     if (!note) {
       toRemove.push(idx);

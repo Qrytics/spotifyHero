@@ -224,14 +224,22 @@ export function HUD(): React.ReactElement {
           >
             {score.toLocaleString()}
           </div>
+          {/* Fixed box so combo show/hide does not resize HUD / chart area */}
           <div
             style={{
               fontSize: "9px",
               color: "var(--accent)",
               fontWeight: 600,
+              fontVariantNumeric: "tabular-nums",
+              lineHeight: 1.25,
+              minHeight: "1.25em",
+              minWidth: "11ch",
+              whiteSpace: "nowrap",
+              visibility: combo > 1 ? "visible" : "hidden",
             }}
+            aria-live="polite"
           >
-            {combo > 1 ? `×${combo} COMBO` : ""}
+            {combo > 1 ? `×${combo} COMBO` : "\u00a0"}
           </div>
         </div>
       </div>
