@@ -10,7 +10,7 @@ function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-/** Compact minimize / maximize / close — native caption controls cannot be scaled on Windows. */
+/** Compact minimize / close — no maximize (full work-area overlay felt like it broke the whole desktop). */
 export function WindowChrome(): React.ReactElement | null {
   if (!isTauri()) return null;
 
@@ -55,12 +55,32 @@ export function WindowChrome(): React.ReactElement | null {
   }, [appWindow]);
 
   useEffect(() => {
-    void clampToWorkArea();
-    const id = window.setInterval(() => {
-      void clampToWorkArea();
-    }, 2500);
-    return () => window.clearInterval(id);
-  }, [clampToWorkArea]);
+    let cancelled = false;
+    const unlisteners: Array<() => void> = [];
+
+    void (async () => {
+      await clampToWorkArea();
+      if (cancelled) return;
+      const events = ["tauri://resize", "tauri://move", "tauri://scale-change"] as const;
+      for (const ev of events) {
+        const unlisten = await appWindow.listen(ev, () => {
+          void clampToWorkArea();
+        });
+        if (cancelled) {
+          unlisten();
+        } else {
+          unlisteners.push(unlisten);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      for (const u of unlisteners) {
+        u();
+      }
+    };
+  }, [appWindow, clampToWorkArea]);
 
   function onChromeMouseDown(e: React.MouseEvent): void {
     if (e.button !== 0) return;
@@ -107,21 +127,6 @@ export function WindowChrome(): React.ReactElement | null {
         >
           <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
             <path d="M1 5h8" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
-          </svg>
-        </button>
-        <button
-          type="button"
-          className="window-chrome-btn"
-          title="Maximize"
-          onClick={() => {
-            void (async () => {
-              await appWindow.toggleMaximize();
-              await clampToWorkArea();
-            })();
-          }}
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-            <rect x="1" y="1.5" width="7.5" height="7.5" fill="none" stroke="currentColor" strokeWidth="1.1" rx="0.5" />
           </svg>
         </button>
         <button

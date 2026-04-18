@@ -29,9 +29,14 @@ pub fn run() {
             // Default (first launch): ~3/4 of prior 380×840 — narrower and shorter.
             .inner_size(180.0, 420.0)
             .min_inner_size(180.0, 280.0)
+            // Cap size so the overlay cannot be stretched to a full-screen panel (felt like it broke the desktop).
+            .max_inner_size(640.0, 1200.0)
             .always_on_top(true)
             .decorations(false)
             .transparent(false)
+            // WebView2: disable Ctrl+/wheel page zoom (often mistaken for “everything on my PC scaled”).
+            .zoom_hotkeys_enabled(false)
+            .maximizable(false)
             .visible_on_all_workspaces(true)
             .build()
             .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
