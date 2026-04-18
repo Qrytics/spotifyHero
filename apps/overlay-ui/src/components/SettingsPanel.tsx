@@ -35,6 +35,12 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
     setDraft((d) => ({ ...d, laneKeys: next }));
   };
 
+  const onSpeedInput = (raw: string) => {
+    const next = Number.parseFloat(raw);
+    if (!Number.isFinite(next)) return;
+    set("noteScrollSpeed")(next);
+  };
+
   const save = () => {
     updateSettings(draft);
     onClose();
@@ -193,9 +199,8 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
               max={5}
               step={0.05}
               value={draft.noteScrollSpeed}
-              onChange={(e) =>
-                set("noteScrollSpeed")(parseFloat(e.target.value))
-              }
+              onInput={(e) => onSpeedInput(e.currentTarget.value)}
+              onChange={(e) => onSpeedInput(e.currentTarget.value)}
               aria-valuemin={0.45}
               aria-valuemax={5}
             />

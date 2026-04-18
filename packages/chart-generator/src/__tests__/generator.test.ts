@@ -22,6 +22,16 @@ function makeBeatEvents(count: number, intervalMs: number): BeatEvent[] {
   }));
 }
 
+function countTapHold(notes: readonly Note[]): { taps: number; holds: number } {
+  let taps = 0;
+  let holds = 0;
+  for (const note of notes) {
+    if (note.durationMs > 0) holds += 1;
+    else taps += 1;
+  }
+  return { taps, holds };
+}
+
 // ---------------------------------------------------------------------------
 // mergeAdjacentHoldNotes
 // ---------------------------------------------------------------------------
@@ -80,10 +90,10 @@ describe("mergeAdjacentHoldNotes", () => {
     expect(out.every((n) => n.durationMs === 0)).toBe(true);
   });
 
-  it("uses minHoldDurationMs so expert may hold where easy demotes (300ms gap)", () => {
+  it("uses minHoldDurationMs so expert may hold where easy demotes (460ms gap)", () => {
     const notes: Note[] = [
       { timeMs: 0, lane: 0, durationMs: 0 },
-      { timeMs: 300, lane: 0, durationMs: 0 },
+      { timeMs: 460, lane: 0, durationMs: 0 },
     ];
     const expertOut = mergeAdjacentHoldNotes(
       notes,
@@ -98,7 +108,7 @@ describe("mergeAdjacentHoldNotes", () => {
       DIFFICULTY_PARAMS.easy.minHoldDurationMs
     );
     expect(expertOut).toHaveLength(1);
-    expect(expertOut[0]!.durationMs).toBe(300);
+    expect(expertOut[0]!.durationMs).toBe(460);
     expect(easyOut).toHaveLength(2);
     expect(easyOut.every((n) => n.durationMs === 0)).toBe(true);
   });
@@ -183,12 +193,12 @@ describe("generateDeterministicChart", () => {
     }
   });
 
-  it("uses deterministic-1.3 generator version", () => {
+  it("uses deterministic-1.4 generator version", () => {
     const beats = makeBeatEvents(5, 500);
     const chart = generateDeterministicChart("v", beats, 120, {
       difficulty: "medium",
     });
-    expect(chart.generatorVersion).toBe("deterministic-1.3");
+    expect(chart.generatorVersion).toBe("deterministic-1.4");
   });
 
   it("confidence-first filter with mixed strengths yields fewer easy notes than expert", () => {
@@ -219,6 +229,33 @@ describe("generateDeterministicChart", () => {
       difficulty: "expert",
     });
     expect(expert.notes.length).toBeGreaterThan(easy.notes.length);
+  });
+
+  it("expert yields more tap density than hard on fast streams", () => {
+    const beats = makeBeatEvents(160, 125);
+    const hard = generateDeterministicChart("dense", beats, 120, {
+      difficulty: "hard",
+    });
+    const expert = generateDeterministicChart("dense", beats, 120, {
+      difficulty: "expert",
+    });
+    const hardCounts = countTapHold(hard.notes);
+    const expertCounts = countTapHold(expert.notes);
+    expect(expertCounts.taps).toBeGreaterThan(hardCounts.taps);
+  });
+
+  it("keeps sustain frequency low across all difficulties", () => {
+    const beats = makeBeatEvents(220, 120);
+    const diffs = ["easy", "medium", "hard", "expert"] as const;
+    for (const difficulty of diffs) {
+      const chart = generateDeterministicChart("ratio-check", beats, 125, {
+        difficulty,
+      });
+      const counts = countTapHold(chart.notes);
+      if (counts.holds === 0) continue;
+      const tapPerHold = counts.taps / counts.holds;
+      expect(tapPerHold).toBeGreaterThanOrEqual(12);
+    }
   });
 });
 
@@ -261,7 +298,7 @@ describe("HybridChartGenerator", () => {
     const gen = new HybridChartGenerator(new PassthroughMLRefiner(), 0.65);
     const beats = makeBeatEvents(20, 500);
     const chart = await gen.generate("t", beats, 120, { difficulty: "medium" });
-    expect(chart.generatorVersion).toBe("deterministic-1.3");
+    expect(chart.generatorVersion).toBe("deterministic-1.4");
   });
 
   it("returns a valid chart shape", async () => {

@@ -34,10 +34,14 @@ export const DIFFICULTY_PARAMS: Record<
     minGapMs: number;
     holdGapMinMs: number;
     holdGapMaxMs: number;
+    /** Cap hold-eligible gap by beat interval fraction to avoid quarter-note over-merging. */
+    holdGapBeatFraction: number;
     /** Holds shorter than this are emitted as taps (micro-holds are awkward). */
     minHoldDurationMs: number;
     /** Do not merge chains longer than this (more tapping, shorter sustains). */
     holdMaxDurationMs: number;
+    /** 0-1 deterministic chance that an eligible chain becomes a hold. */
+    maxHoldFraction: number;
     /**
      * 0–99: deterministic chance per mergeable chain to stay as separate taps
      * instead of one hold (more tap gameplay).
@@ -48,38 +52,46 @@ export const DIFFICULTY_PARAMS: Record<
   easy: {
     densityMultiplier: 0.26,
     minGapMs: 148,
-    holdGapMinMs: 520,
-    holdGapMaxMs: 1300,
-    minHoldDurationMs: 400,
-    holdMaxDurationMs: 720,
-    holdDemergePercent: 48,
+    holdGapMinMs: 540,
+    holdGapMaxMs: 1180,
+    holdGapBeatFraction: 0.7,
+    minHoldDurationMs: 500,
+    holdMaxDurationMs: 760,
+    maxHoldFraction: 0.18,
+    holdDemergePercent: 72,
   },
   medium: {
     densityMultiplier: 0.52,
     minGapMs: 105,
-    holdGapMinMs: 440,
-    holdGapMaxMs: 1100,
-    minHoldDurationMs: 320,
+    holdGapMinMs: 480,
+    holdGapMaxMs: 1060,
+    holdGapBeatFraction: 0.72,
+    minHoldDurationMs: 460,
     holdMaxDurationMs: 720,
-    holdDemergePercent: 42,
+    maxHoldFraction: 0.3,
+    holdDemergePercent: 68,
   },
   hard: {
     densityMultiplier: 0.78,
     minGapMs: 88,
-    holdGapMinMs: 380,
-    holdGapMaxMs: 900,
-    minHoldDurationMs: 280,
-    holdMaxDurationMs: 650,
-    holdDemergePercent: 38,
+    holdGapMinMs: 440,
+    holdGapMaxMs: 920,
+    holdGapBeatFraction: 0.78,
+    minHoldDurationMs: 430,
+    holdMaxDurationMs: 640,
+    maxHoldFraction: 0.42,
+    holdDemergePercent: 64,
   },
   expert: {
     densityMultiplier: 1.0,
-    minGapMs: 72,
-    holdGapMinMs: 340,
-    holdGapMaxMs: 780,
-    minHoldDurationMs: 240,
-    holdMaxDurationMs: 580,
-    holdDemergePercent: 34,
+    minGapMs: 68,
+    holdGapMinMs: 400,
+    holdGapMaxMs: 860,
+    holdGapBeatFraction: 0.85,
+    minHoldDurationMs: 380,
+    holdMaxDurationMs: 620,
+    maxHoldFraction: 0.55,
+    holdDemergePercent: 60,
   },
 };
 
@@ -95,7 +107,9 @@ export function mergeAdjacentHoldNotes(
   minHoldDurationMs = 280,
   holdMaxDurationMs = 1400,
   /** 0 = always merge eligible chains into holds (tests). Above 0 = deterministic tap chains. */
-  holdDemergePercent = 0
+  holdDemergePercent = 0,
+  trackId = "",
+  maxHoldFraction = 1
 ): Note[] {
   const maxLane = notes.reduce((m, n) => Math.max(m, n.lane), 0);
   const buckets: Note[][] = Array.from({ length: maxLane + 1 }, () => []);
@@ -144,7 +158,17 @@ export function mergeAdjacentHoldNotes(
           const demerge =
             holdDemergePercent > 0 &&
             (h >>> 0) % 100 < holdDemergePercent;
-          if (demerge) {
+          let holdCoin = true;
+          if (trackId && maxHoldFraction < 1) {
+            let seed = 2166136261;
+            for (let c = 0; c < trackId.length; c++) {
+              seed = Math.imul(seed ^ trackId.charCodeAt(c), 16777619);
+            }
+            seed ^= Math.floor(head.timeMs) ^ Math.imul(lane + 1, 2246822519);
+            const u = (mix32(seed) >>> 0) / 4294967296;
+            holdCoin = u <= Math.max(0, Math.min(1, maxHoldFraction));
+          }
+          if (demerge || !holdCoin) {
             for (let k = i; k <= j; k++) {
               const n = laneNotes[k]!;
               merged.push({ timeMs: n.timeMs, lane, durationMs: 0 });
@@ -290,10 +314,15 @@ export function generateDeterministicChart(
   const withHolds = mergeAdjacentHoldNotes(
     notes,
     preset.holdGapMinMs,
-    preset.holdGapMaxMs,
+    Math.min(
+      preset.holdGapMaxMs,
+      Math.round((60_000 / Math.max(1, bpm)) * preset.holdGapBeatFraction)
+    ),
     preset.minHoldDurationMs,
     preset.holdMaxDurationMs,
-    preset.holdDemergePercent
+    preset.holdDemergePercent,
+    trackId,
+    preset.maxHoldFraction
   );
 
   return {
@@ -301,7 +330,7 @@ export function generateDeterministicChart(
     difficulty,
     notes: withHolds,
     bpm,
-    generatorVersion: "deterministic-1.3",
+    generatorVersion: "deterministic-1.4",
     generatedAt: new Date(),
   };
 }

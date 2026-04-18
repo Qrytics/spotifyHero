@@ -13,6 +13,8 @@ function isTauriRuntime(): boolean {
 
 /** Desktop: poll infrequently — playback position is smoothed via `playbackClock`; only need timely pause/track changes. */
 const TAURI_POLL_MS = 2800;
+const HEARTBEAT_PUSH_MS = 9000;
+const SEEK_DISCONTINUITY_MS = 2800;
 
 function createDefaultPoller(): SpotifyPoller {
   if (isTauriRuntime()) {
@@ -45,15 +47,39 @@ function createDefaultPoller(): SpotifyPoller {
  */
 export function useSpotifySync(poller?: SpotifyPoller): void {
   const correctorRef = useRef(new DriftCorrector());
+  const lastAppliedRef = useRef<{
+    isPlaying: boolean;
+    positionMs: number;
+    trackId: string | null;
+    emittedAtMs: number;
+  } | null>(null);
 
   useEffect(() => {
     const p: SpotifyPoller = poller ?? createDefaultPoller();
 
     p.onStateChange((state) => {
+      const nowMs = Date.now();
+      const prev = lastAppliedRef.current;
+      const trackChanged = !prev || prev.trackId !== state.trackId;
+      const playToggled = !prev || prev.isPlaying !== state.isPlaying;
+      const largeSeek =
+        !prev || Math.abs(state.positionMs - prev.positionMs) >= SEEK_DISCONTINUITY_MS;
+      const heartbeatDue =
+        !prev || nowMs - prev.emittedAtMs >= HEARTBEAT_PUSH_MS;
+      const shouldApply = trackChanged || playToggled || largeSeek || heartbeatDue;
+      if (!shouldApply) return;
+
       correctorRef.current.update(state.positionMs);
       const correctedPos = correctorRef.current.correct(state.positionMs);
       playbackClock.sync(correctedPos, state.isPlaying, state.trackId);
-      useGameStore.getState().setPlayback({ ...state, positionMs: correctedPos });
+      const next = { ...state, positionMs: correctedPos };
+      useGameStore.getState().setPlayback(next);
+      lastAppliedRef.current = {
+        isPlaying: next.isPlaying,
+        positionMs: next.positionMs,
+        trackId: next.trackId,
+        emittedAtMs: nowMs,
+      };
     });
 
     if (p instanceof MockSpotifyPoller) {

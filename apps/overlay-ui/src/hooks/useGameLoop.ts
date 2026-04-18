@@ -285,7 +285,7 @@ export function useGameLoop(): void {
       // Large *backward* jumps (seek) need a scoring reset. Forward jumps (catch-up after
       // throttled rAF or Spotify poll) must NOT clear active holds or lane keys — that was
       // causing sustains to vanish / fail while the player still held the key.
-      if (prev !== null && pos < prev - 1200) {
+      if (prev !== null && pos < prev - 3000) {
         engine.resetSeekState();
       }
 

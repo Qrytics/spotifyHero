@@ -103,7 +103,12 @@ export const useGameStore = create<GameState>((set, get) => ({
   setPlayback: (playback) => {
     const prevTrackId = get().playback?.trackId ?? null;
     const nextTrackId = playback.trackId;
-    const trackChanged = prevTrackId !== nextTrackId;
+    const chartTrackId = get().chart?.trackId ?? null;
+    const baselineTrackId = chartTrackId ?? prevTrackId;
+    const trackChanged =
+      Boolean(nextTrackId) &&
+      Boolean(baselineTrackId) &&
+      baselineTrackId !== nextTrackId;
 
     set({ playback });
 
@@ -117,9 +122,13 @@ export const useGameStore = create<GameState>((set, get) => ({
 
     const chart = get().chart;
     const chartMatches = chart?.trackId === nextTrackId;
-    const needsNewChart = trackChanged || !chartMatches;
+    const needsNewChart =
+      Boolean(nextTrackId) && (!chart || !chartMatches || trackChanged);
 
     if (needsNewChart) {
+      if (get().phase === "loading" && !trackChanged) {
+        return;
+      }
       const st = get();
       let inherit: "autoplay" | "manual" | null = null;
       if (st.phase === "autoplay" || st.phase === "manual") {
@@ -168,13 +177,17 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   setChart: (chart) =>
     set((state) => {
+      const keepExistingChart =
+        state.chart &&
+        state.chart.trackId === chart.trackId &&
+        state.chart.difficulty === chart.difficulty;
       const phase: GamePhase =
         state.sessionPlayMode ??
         (state.settings.autoplay ? "autoplay" : "manual");
       const nextLast =
         phase === "autoplay" || phase === "manual" ? phase : state.lastPlayPhase;
       return {
-        chart,
+        chart: keepExistingChart ? state.chart : chart,
         phase,
         sessionPlayMode: null,
         lastPlayPhase: nextLast,
