@@ -2,7 +2,7 @@
 
 A desktop overlay game that turns whatever you're listening to on Spotify into a **Friday Night Funkin' / Guitar Hero-style note highway** displayed in a tiny always-on-top window alongside your screen.
 
-Notes auto-play by default. Press a key to jump in and play yourself. Climb leaderboards, challenge friends on any song.
+Watch notes autoplay, or switch to manual and play the lanes yourself. Climb leaderboards and challenge friends on any song.
 
 Available on [Itch.io](https://spotifyhero.itch.io) (now). Steam build pipeline planned.
 
@@ -28,9 +28,8 @@ Available on [Itch.io](https://spotifyhero.itch.io) (now). Steam build pipeline 
 ## What it does
 
 - You open Spotify and play any song.
-- spotifyHero detects the track, generates a note chart in real time, and displays a note highway in a **small floating window** (360×640 px by default) that stays above all other windows.
-- The game **autoplays** by default — notes hit themselves, so you can watch the highway visualise your music.
-- Press **Space** (configurable) to instantly switch to **manual play** — you hit the correct lane key when notes reach the hit line.
+- spotifyHero detects the track, generates a note chart in real time, and displays a note highway in a **small floating window** (default **180×420** px on first launch in the Tauri app) that stays above all other windows.
+- The game can run in **autoplay** (notes hit themselves) or **manual** play. `AppSettings` defaults to **manual** first (`autoplay: false`). Press **Space** (configurable) during a song to **toggle autoplay ↔ manual**; in manual mode, use **D F J K** (defaults) when notes reach the hit line.
 - Your score, combo, and accuracy are tracked. When the song ends, results are shown and your score is submitted to the leaderboard.
 - One click generates a **challenge link** you can send to friends: they load the same song and try to beat your score.
 
@@ -41,10 +40,10 @@ Available on [Itch.io](https://spotifyhero.itch.io) (now). Steam build pipeline 
 | Layer | Technology | Why |
 |-------|-----------|-----|
 | Desktop shell | **Tauri 2 + Rust** | Small binaries, strong security, native always-on-top window controls |
-| Game / UI | **React + PixiJS** | Fast 2D canvas rendering for the note highway; React for HUD + menus |
+| Game / UI | **React + HTML5 Canvas** | 2D canvas highway (`NoteHighway`); React for HUD + menus |
 | State | **Zustand + Zod** | Minimal, typed, predictable game state |
-| Audio sync | **Rust (cpal family)** via Tauri IPC | Low-latency capture, robust timing clocks |
-| Chart generation | Hybrid: deterministic + **ONNX Runtime** (Rust) | Works offline; ML refines quality without requiring server inference |
+| Audio sync | **Spotify Web API** polling + client **`playbackClock`** | Position reports re-anchored when drift is large; smooth extrapolation between polls |
+| Chart generation | Hybrid: deterministic + optional **ML refiner** (stub in TS; ONNX planned in Rust) | Works offline; deterministic fallback always available |
 | Leaderboards | **Supabase** (Postgres + Auth) | Fast MVP; can migrate to custom API later |
 | Package manager | **pnpm workspaces** | Fast installs, strict dependency isolation |
 
@@ -56,7 +55,7 @@ Available on [Itch.io](https://spotifyhero.itch.io) (now). Steam build pipeline 
 spotifyHero/
 ├── apps/
 │   ├── desktop/          Tauri 2 Rust shell – native window, Spotify OAuth, IPC
-│   └── overlay-ui/       React + PixiJS note highway and HUD
+│   └── overlay-ui/       React + Canvas note highway and HUD
 ├── packages/
 │   ├── shared-types/     Zod schemas + TypeScript types (shared data contracts)
 │   ├── gameplay-core/    Scoring engine, hit windows, combo, mode toggle
@@ -97,12 +96,13 @@ cd spotifyHero
 # 2. Install all workspace dependencies
 pnpm install
 
-# 3. Build packages (shared-types must go first)
+# 3. Build workspace packages (shared-types first if you build individually)
 pnpm --filter @spotifyhero/shared-types build
 pnpm --filter @spotifyhero/gameplay-core build
 pnpm --filter @spotifyhero/chart-generator build
 pnpm --filter @spotifyhero/audio-engine build
 pnpm --filter @spotifyhero/leaderboard-client build
+# Or build everything: `pnpm build` from the repo root (runs each package's build script).
 
 # 4. Start the overlay UI in a browser (demo mode, no Tauri needed)
 pnpm --filter overlay-ui dev
@@ -145,7 +145,7 @@ In manual mode, press **D F J K** to hit notes in lanes 0–3.
 
 ### Spotify developer credentials
 1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
-2. Create an app, set redirect URI to `http://localhost:8888/callback`.
+2. Create an app, set redirect URI to **`http://127.0.0.1:8888/callback`** (must match `apps/desktop/src-tauri`).
 3. Copy the **Client ID**.
 4. Create `apps/desktop/src-tauri/.env` (gitignored):
    ```
@@ -173,11 +173,11 @@ pnpm dev:desktop
 # This starts vite on :1420 and opens the native Tauri overlay window
 ```
 
-The window opens at 360×640 and stays above all other windows. You can:
-- **Drag** it anywhere on screen.
-- **Minimize** it to the taskbar.
-- **Resize** it (minimum 200×400).
-- Window position and size are saved automatically between sessions.
+The native window opens at **180×420** px by default (`apps/desktop/src-tauri/src/lib.rs`), stays above other windows, and uses a **custom title bar** (drag the top strip; compact window controls). You can:
+- **Drag** it by the title strip (not on the minimize / maximize / close icons).
+- **Minimize**, **maximize**, or **close** via the small buttons on the right.
+- **Resize** it (minimum **180×280**).
+- Horizontal window position may be restored from saved settings where implemented.
 
 ### Run tests
 ```bash
@@ -219,47 +219,47 @@ Planned via `steamworks-rs` crate. Achievements and cloud save hooks are stubs i
 
 ## How note generation works
 
-spotifyHero uses a **hybrid pipeline** — deterministic first, ML-assisted second:
+spotifyHero uses a **hybrid pipeline** — deterministic first, optional ML second:
 
 ```
-Spotify audio / Web API
-        │
-        ▼
-  Beat & onset detection
-  (Rust backend, cpal audio capture)
+Beat / onset stream (Web API or synthetic demo grid in overlay dev)
         │
         ▼
 ┌──────────────────────────────────┐
 │  Stage 1: Deterministic chart    │
-│  • Filter onsets by difficulty   │
-│    density (Easy 30%, Expert 100%)│
-│  • Assign lanes round-robin      │
-│  • Enforce min lane gap (80 ms)  │
+│  • Filter by difficulty density  │
+│    (e.g. Easy ~26%, Expert 100%) │
+│  • Confidence-first when events  │
+│    differ; even spread in time   │
+│    when confidence is uniform    │
+│  • Stable-hash lane assignment   │
+│  • Min gap per lane (preset)     │
+│  • Merge taps → holds (chains +   │
+│    min hold duration per diff.)  │
 └──────────────┬───────────────────┘
                │
                ▼
 ┌──────────────────────────────────┐
-│  Stage 2: ML refinement (ONNX)   │
-│  • Lightweight sequence model    │
-│  • Improves phrasing & variety   │
-│  • Confidence gate: if model     │
-│    confidence < 0.65 → use       │
-│    deterministic chart instead   │
+│  Stage 2: ML refinement (stub)   │
+│  • `PassthroughMLRefiner` in TS  │
+│  • Production: ONNX via Rust IPC │
+│  • Confidence gate (< 0.65 →   │
+│    keep deterministic chart)     │
 └──────────────┬───────────────────┘
                │
                ▼
 ┌──────────────────────────────────┐
-│  Stage 3: Drift correction       │
-│  • Spotify position reports lag  │
-│  • DriftCorrector adjusts timing │
-│    using wall-clock comparison   │
+│  Playback alignment              │
+│  • `playbackClock` vs Spotify    │
+│    position; re-sync on large    │
+│    drift (`playbackClock.ts`)    │
 └──────────────────────────────────┘
 ```
 
 **Why this approach:**
-- Works fully **offline** — no server inference required.
+- Works fully **offline** — no server inference required for the baseline chart.
 - Deterministic fallback means charts are **never broken**.
-- ML layer improves quality without hard dependency.
+- Optional ML layer (when wired and confident enough) can improve variety without blocking play.
 
 ---
 
@@ -310,14 +310,14 @@ Settings are stored in `~/.local/share/spotifyHero/settings.json` (Linux) or equ
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `difficulty` | `medium` | easy / medium / hard / expert |
-| `autoplay` | `true` | Start in autoplay mode |
+| `autoplay` | `false` | Start in autoplay vs manual (`AppSettings` default) |
 | `playKeybind` | `Space` | Toggle autoplay/manual |
 | `laneKeys` | `["d","f","j","k"]` | Keys for lanes 0–3 |
 | `playerName` | _(none)_ | Display name on leaderboard |
 | `window.alwaysOnTop` | `true` | Keep window above all others |
 | `window.opacity` | `0.95` | Window transparency (0.1–1.0) |
-| `window.width` | `360` | Initial window width (px) |
-| `window.height` | `640` | Initial window height (px) |
+| `window.width` | `360` | Default in Zod schema (`shared-types`). Tauri **first-launch** inner width is **180** in `lib.rs` until full geometry restore. |
+| `window.height` | `640` | Schema default; Tauri **first-launch** inner height is **420**. |
 | `supabaseUrl` | _(none)_ | Your Supabase project URL |
 | `supabaseAnonKey` | _(none)_ | Your Supabase anon key |
 | `spotify_client_id` | _(none)_ | Spotify Developer app client ID |
@@ -362,6 +362,6 @@ AI coding agents: see `docs/ai-agent-guide.md` for the full navigation and editi
 | 2 – Gameplay MVP | ✅ Done | Highway renderer, autoplay/manual toggle, scoring + combo |
 | 3 – Chart generation v1 | ✅ Done | Deterministic beat/onset charting + difficulty presets |
 | 4 – Social loop | 🔲 Next | Leaderboards, challenge links, song+score sharing |
-| 5 – Chart generation v2 | 🔲 Planned | ML refinement + confidence fallback (ONNX model) |
+| 5 – Chart generation v2 | 🔲 Planned | ONNX ML refinement in Rust + confidence fallback (TS stub exists) |
 | 6 – Distribution | 🔲 Planned | Itch.io packaging, then Steam build pipeline |
 | 7 – Steam features | 🔲 Future | Achievements, cloud save, Steam leaderboards |
