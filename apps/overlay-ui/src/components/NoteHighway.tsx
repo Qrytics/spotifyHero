@@ -47,6 +47,8 @@ const HIT_RING_EXPANSION = 56;
 const OFF_SCREEN_BOTTOM_PAD = 24;
 /** Only clear hold strips after musical tail + buffer (never geometry-only — that hid active sustains). */
 const HOLD_STRIP_GHOST_SWEEP_MS = 520;
+/** Small temporal epsilon to avoid precision edge-cases around sustain tails. */
+const TIME_EPSILON_MS = 0.01;
 
 type HitFx = { lane: number; judgement: Judgement; t0: number };
 
@@ -54,10 +56,17 @@ type HitFx = { lane: number; judgement: Judgement; t0: number };
 type NoteVisibility = {
   /** Tap hidden immediately after a good-timing hit. */
   goneTap: Set<number>;
-  /** Hold: head gem removed after good head; sustain body until it scrolls away. */
-  holdNoHead: Set<number>;
+  /** Hold visuals tracked by absolute playback times (indexed by note id). */
+  activeSustains: Map<number, SustainVisual>;
   /** Miss / bad: keep drawing until the gem slides past the bottom edge. */
   missSlide: Set<number>;
+};
+
+type SustainVisual = {
+  id: number;
+  startTime: number;
+  endTime: number;
+  headHidden: boolean;
 };
 
 function judgementFxColor(j: Judgement): string {
@@ -138,7 +147,7 @@ export function NoteHighway(): React.ReactElement {
 
     const visibility: NoteVisibility = {
       goneTap: new Set(),
-      holdNoHead: new Set(),
+      activeSustains: new Map(),
       missSlide: new Set(),
     };
 
@@ -177,7 +186,7 @@ export function NoteHighway(): React.ReactElement {
 
       if (failed) {
         visibility.goneTap.delete(idx);
-        visibility.holdNoHead.delete(idx);
+        visibility.activeSustains.delete(idx);
         visibility.missSlide.add(idx);
         return;
       }
@@ -188,16 +197,27 @@ export function NoteHighway(): React.ReactElement {
         visibility.missSlide.delete(idx);
         return;
       }
+      const startTime = noteHeadTimeMs(note, CHART_LEAD_IN_MS);
+      const endTime = noteTailTimeMs(note, CHART_LEAD_IN_MS);
+      const existing = visibility.activeSustains.get(idx);
+      visibility.activeSustains.set(idx, {
+        id: idx,
+        startTime: existing?.startTime ?? startTime,
+        endTime,
+        headHidden: existing?.headHidden ?? false,
+      });
       // Sustain ticks (interior + tail): each tick has a unique `sig` via `deltaMs`.
       if (isHoldSustainSuccessTick) {
-        if (ev.showHitFx === true) {
-          visibility.holdNoHead.delete(idx);
-          visibility.missSlide.delete(idx);
-        }
+        visibility.missSlide.delete(idx);
         return;
       }
       // Hold head
-      visibility.holdNoHead.add(idx);
+      visibility.activeSustains.set(idx, {
+        id: idx,
+        startTime,
+        endTime,
+        headHidden: true,
+      });
       visibility.missSlide.delete(idx);
     });
 
@@ -304,7 +324,7 @@ export function NoteHighway(): React.ReactElement {
       hitEffects.length = 0;
       lastEventSig = "";
       visibility.goneTap.clear();
-      visibility.holdNoHead.clear();
+      visibility.activeSustains.clear();
       visibility.missSlide.clear();
     };
   }, [chart]);
@@ -425,22 +445,22 @@ function paintNotes(
     const headT = noteHeadTimeMs(note, L);
     const endMs = noteTailTimeMs(note, L);
 
-    if (headT > tHigh) break;
+    if (headT > tHigh + TIME_EPSILON_MS) break;
 
-    if (endMs < tLow) continue;
+    if (endMs < tLow - TIME_EPSILON_MS) continue;
 
     const timeUntil = headT - positionMs;
     const lane = note.lane;
     const cx = lane * laneWidth + laneWidth / 2;
-    const cy = hitLineY - timeUntil * pxPerMs;
+    const cy = yFromTime(hitLineY, pxPerMs, headT, positionMs);
     const hex = LANE_HEX[lane] ?? "#ffffff";
     const pulse = timeUntil > 900 || timeUntil < -900 ? 0 : 1 - Math.abs(timeUntil) / 900;
     const glowR = NOTE_RADIUS + 5 + pulse * 3;
-    const holdStripOnly = note.durationMs > 0 && vis.holdNoHead.has(i);
+    const sustain = vis.activeSustains.get(i);
+    const holdStripOnly = note.durationMs > 0 && sustain?.headHidden === true;
 
     if (note.durationMs > 0) {
-      const timeUntilTail = endMs - positionMs;
-      const cyTail = hitLineY - timeUntilTail * pxPerMs;
+      const cyTail = yFromTime(hitLineY, pxPerMs, endMs, positionMs);
       const top = Math.min(cy, cyTail);
       const h = Math.abs(cyTail - cy);
       const bodyW = NOTE_RADIUS * 2.35;
@@ -479,17 +499,18 @@ function paintNotes(
 
   ctx.globalAlpha = 1;
 
-  for (const idx of [...vis.holdNoHead]) {
+  for (const [idx, sustain] of [...vis.activeSustains.entries()]) {
     const note = notes[idx];
     if (!note || note.durationMs <= 0) {
-      vis.holdNoHead.delete(idx);
+      vis.activeSustains.delete(idx);
       continue;
     }
-    const endMs = noteTailTimeMs(note, CHART_LEAD_IN_MS);
-    if (positionMs >= endMs + HOLD_STRIP_GHOST_SWEEP_MS) {
-      vis.holdNoHead.delete(idx);
+    if (positionMs >= sustain.endTime + HOLD_STRIP_GHOST_SWEEP_MS - TIME_EPSILON_MS) {
+      vis.activeSustains.delete(idx);
     }
   }
+
+  paintSustainDebugOverlay(ctx, vis.activeSustains, positionMs, width);
 
   paintMissSlidingNotes(
     ctx,
@@ -528,12 +549,10 @@ function paintMissSlidingNotes(
 
     const headT = noteHeadTimeMs(note, CHART_LEAD_IN_MS);
     const endMs = noteTailTimeMs(note, CHART_LEAD_IN_MS);
-    const timeUntil = headT - positionMs;
-    const timeUntilTail = endMs - positionMs;
     const lane = note.lane;
     const cx = lane * laneWidth + laneWidth / 2;
-    const cy = hitLineY - timeUntil * pxPerMs;
-    const cyTail = hitLineY - timeUntilTail * pxPerMs;
+    const cy = yFromTime(hitLineY, pxPerMs, headT, positionMs);
+    const cyTail = yFromTime(hitLineY, pxPerMs, endMs, positionMs);
     const bottom = Math.max(cy, cyTail);
 
     if (bottom > height + OFF_SCREEN_BOTTOM_PAD) {
@@ -585,6 +604,49 @@ function paintMissSlidingNotes(
   }
 
   ctx.globalAlpha = 1;
+}
+
+function yFromTime(
+  hitLineY: number,
+  pxPerMs: number,
+  noteTimeMs: number,
+  positionMs: number
+): number {
+  const dt = noteTimeMs - positionMs;
+  return hitLineY - dt * pxPerMs;
+}
+
+function paintSustainDebugOverlay(
+  ctx: CanvasRenderingContext2D,
+  activeSustains: Map<number, SustainVisual>,
+  positionMs: number,
+  width: number
+): void {
+  if (activeSustains.size === 0) return;
+  const rows = [...activeSustains.values()]
+    .sort((a, b) => a.endTime - b.endTime)
+    .slice(0, 10)
+    .map(
+      (s) =>
+        `S#${s.id}  t=${positionMs.toFixed(0)}  start=${s.startTime.toFixed(0)}  end=${s.endTime.toFixed(0)}  rem=${(s.endTime - positionMs).toFixed(0)}`
+    );
+  const lineH = 14;
+  const pad = 8;
+  const boxH = pad * 2 + lineH * (rows.length + 1);
+  const boxW = Math.min(width - 16, 360);
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(8, 8, boxW, boxH);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#baffcf";
+  ctx.font = "12px monospace";
+  ctx.fillText(`Active sustains: ${activeSustains.size}`, 14, 8 + pad + lineH - 2);
+  for (let i = 0; i < rows.length; i++) {
+    ctx.fillStyle = "#e8f6ff";
+    ctx.fillText(rows[i]!, 14, 8 + pad + (i + 2) * lineH - 2);
+  }
+  ctx.restore();
 }
 
 function paintHitEffects(
