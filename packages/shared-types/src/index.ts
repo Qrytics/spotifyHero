@@ -159,6 +159,8 @@ export const PlaybackStateSchema = z.object({
   positionMs: z.coerce.number().nonnegative(),
   trackId: z.string().nullable(),
   track: SpotifyTrackSchema.nullable(),
+  /** Spotify Web API `device.volume_percent` (0–100), when present. */
+  volumePercent: z.number().int().min(0).max(100).nullable().optional(),
 });
 export type PlaybackState = z.infer<typeof PlaybackStateSchema>;
 

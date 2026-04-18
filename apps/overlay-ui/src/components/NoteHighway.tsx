@@ -7,6 +7,7 @@ import {
 } from "@spotifyhero/gameplay-core";
 import { useGameStore } from "../store/gameStore.js";
 import { playbackClock } from "../lib/playbackClock.js";
+import { isSpotifyPlaybackTooQuietForNotes } from "../lib/playbackVolumeGate.js";
 
 /**
  * Canvas 2D highway — hot path avoids allocations, map/filter/sort per frame.
@@ -42,7 +43,7 @@ const SCROLL_IN_EXTRA_MS = SCROLL_IN_ABOVE_MS + SCROLL_IN_STUTTER_MS;
 const PLAYABLE_PHASES = new Set(["autoplay", "manual", "paused"]);
 
 const HIT_FX_MS = 480;
-const HIT_RING_EXPANSION = 56;
+const HIT_RING_EXPANSION = 14;
 /** Past this Y (CSS px) the note is considered off-screen downward. */
 const OFF_SCREEN_BOTTOM_PAD = 24;
 /** Only clear hold strips after musical tail + buffer (never geometry-only — that hid active sustains). */
@@ -67,6 +68,12 @@ type SustainVisual = {
   startTime: number;
   endTime: number;
   headHidden: boolean;
+};
+
+type ReceptorPressState = {
+  isDown: boolean;
+  downAt: number;
+  upAt: number;
 };
 
 function judgementFxColor(j: Judgement): string {
@@ -101,6 +108,64 @@ function lowerBoundTime(notes: readonly Note[], t: number): number {
     else hi = mid;
   }
   return lo;
+}
+
+/**
+ * Notes whose head lies inside another sustain's body on the same lane (by **time**, not chart
+ * index order). Fixes inner gems when the chart lists taps before the parent hold.
+ */
+function occludedInsideSustain(
+  notes: readonly Note[],
+  leadInMs: number
+): Set<number> {
+  const out = new Set<number>();
+  const eps = TIME_EPSILON_MS;
+
+  for (let lane = 0; lane < LANE_COUNT; lane++) {
+    const sustains: { idx: number; head: number; tail: number }[] = [];
+    for (let idx = 0; idx < notes.length; idx++) {
+      const note = notes[idx]!;
+      if (note.lane !== lane) continue;
+      if (note.durationMs <= eps) continue;
+      const h = noteHeadTimeMs(note, leadInMs);
+      const t = noteTailTimeMs(note, leadInMs);
+      if (t <= h + eps) continue;
+      sustains.push({ idx, head: h, tail: t });
+    }
+    sustains.sort((a, b) => a.head - b.head || a.tail - b.tail);
+
+    for (let idx = 0; idx < notes.length; idx++) {
+      const note = notes[idx]!;
+      if (note.lane !== lane) continue;
+      const h = noteHeadTimeMs(note, leadInMs);
+      for (const s of sustains) {
+        if (s.idx === idx) continue;
+        if (h > s.head + eps && h < s.tail - eps) {
+          out.add(idx);
+          break;
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+/** Sustain body: flat by the head gem, full pill cap at the tail (farther in time, smaller screen Y). */
+function paintSustainBodyPath(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cyHead: number,
+  cyTail: number,
+  bodyW: number,
+  radii: readonly [number, number, number, number]
+): void {
+  const top = Math.min(cyHead, cyTail);
+  const bot = Math.max(cyHead, cyTail);
+  const h = Math.max(bot - top, 4);
+  const x = cx - bodyW / 2;
+  ctx.beginPath();
+  ctx.roundRect(x, top, bodyW, h, radii);
 }
 
 export function NoteHighway(): React.ReactElement {
@@ -144,6 +209,11 @@ export function NoteHighway(): React.ReactElement {
 
     const hitEffects: HitFx[] = [];
     let lastEventSig = "";
+    const receptorPress: ReceptorPressState[] = Array.from({ length: LANE_COUNT }, () => ({
+      isDown: false,
+      downAt: -Infinity,
+      upAt: -Infinity,
+    }));
 
     const visibility: NoteVisibility = {
       goneTap: new Set(),
@@ -220,6 +290,29 @@ export function NoteHighway(): React.ReactElement {
       });
       visibility.missSlide.delete(idx);
     });
+
+    const onLaneDown = (ev: Event): void => {
+      const ce = ev as CustomEvent<{ lane: number }>;
+      const lane = ce.detail?.lane;
+      if (lane === undefined || lane < 0 || lane >= LANE_COUNT) return;
+      receptorPress[lane] = {
+        ...receptorPress[lane]!,
+        isDown: true,
+        downAt: performance.now(),
+      };
+    };
+    const onLaneUp = (ev: Event): void => {
+      const ce = ev as CustomEvent<{ lane: number }>;
+      const lane = ce.detail?.lane;
+      if (lane === undefined || lane < 0 || lane >= LANE_COUNT) return;
+      receptorPress[lane] = {
+        ...receptorPress[lane]!,
+        isDown: false,
+        upAt: performance.now(),
+      };
+    };
+    window.addEventListener("spotifyhero:lanedown", onLaneDown);
+    window.addEventListener("spotifyhero:laneup", onLaneUp);
 
     const rebuildStatic = (
       logicalW: number,
@@ -304,15 +397,19 @@ export function NoteHighway(): React.ReactElement {
         Math.max(0.45, state.settings.noteScrollSpeed ?? 1)
       );
       const lookAheadEffective = LOOK_AHEAD_MS / spd;
+      const notesToPaint = isSpotifyPlaybackTooQuietForNotes(state.playback)
+        ? []
+        : sortedNotesRef.current;
       paintNotes(
         ctx,
-        sortedNotesRef.current,
+        notesToPaint,
         pos,
         lw,
         lh,
         visibility,
         lookAheadEffective
       );
+      paintReceptorPressGlow(ctx, lw, lh, receptorPress, performance.now());
       paintHitEffects(ctx, lw, lh, hitEffects, performance.now());
     };
 
@@ -327,6 +424,8 @@ export function NoteHighway(): React.ReactElement {
 
     return () => {
       unsubHits();
+      window.removeEventListener("spotifyhero:lanedown", onLaneDown);
+      window.removeEventListener("spotifyhero:laneup", onLaneUp);
       cancelAnimationFrame(rafRef.current);
       ro.disconnect();
       staticRef.current = null;
@@ -430,13 +529,15 @@ function paintNotes(
   const n = notes.length;
   if (n === 0) return;
 
+  const L = CHART_LEAD_IN_MS;
+  const occluded = occludedInsideSustain(notes, L);
+
   const laneWidth = width / LANE_COUNT;
   const hitLineY = hitLineYFromHeight(height);
   const pxPerMs = hitLineY / lookAheadMs;
 
   const tLow = positionMs - LOOK_BACK_MS;
   const tHigh = positionMs + lookAheadMs + SCROLL_IN_EXTRA_MS;
-  const L = CHART_LEAD_IN_MS;
   let i = lowerBoundTime(notes, tLow - L);
   while (i > 0) {
     const prev = notes[i - 1]!;
@@ -451,6 +552,7 @@ function paintNotes(
     const note = notes[i]!;
     if (vis.goneTap.has(i)) continue;
     if (vis.missSlide.has(i)) continue;
+    if (occluded.has(i)) continue;
 
     const headT = noteHeadTimeMs(note, L);
     const endMs = noteTailTimeMs(note, L);
@@ -474,16 +576,17 @@ function paintNotes(
       const top = Math.min(cy, cyTail);
       const h = Math.abs(cyTail - cy);
       const bodyW = NOTE_RADIUS * 2.35;
-      ctx.globalAlpha = holdStripOnly ? 0.48 : 0.42;
+      const rTail = Math.min(bodyW * 0.5, h * 0.5);
+      const rHead = Math.min(2.5, bodyW * 0.1);
+      const cornerRadii = [rTail, rTail, rHead, rHead] as const;
+      ctx.globalAlpha = holdStripOnly ? 0.88 : 0.84;
       ctx.fillStyle = hex;
-      ctx.beginPath();
-      ctx.roundRect(cx - bodyW / 2, top, bodyW, Math.max(h, 4), 7);
+      paintSustainBodyPath(ctx, cx, cy, cyTail, bodyW, cornerRadii);
       ctx.fill();
-      ctx.globalAlpha = holdStripOnly ? 0.72 : 0.65;
+      ctx.globalAlpha = holdStripOnly ? 0.95 : 0.9;
       ctx.strokeStyle = "rgba(255,255,255,0.35)";
       ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(cx - bodyW / 2, top, bodyW, Math.max(h, 4), 7);
+      paintSustainBodyPath(ctx, cx, cy, cyTail, bodyW, cornerRadii);
       ctx.stroke();
     }
 
@@ -520,8 +623,6 @@ function paintNotes(
     }
   }
 
-  paintSustainDebugOverlay(ctx, vis.activeSustains, positionMs, width);
-
   paintMissSlidingNotes(
     ctx,
     notes,
@@ -529,8 +630,43 @@ function paintNotes(
     width,
     height,
     vis.missSlide,
-    lookAheadMs
+    lookAheadMs,
+    occluded
   );
+}
+
+function paintReceptorPressGlow(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  press: readonly ReceptorPressState[],
+  now: number
+): void {
+  const laneWidth = width / LANE_COUNT;
+  const hitLineY = hitLineYFromHeight(height);
+  for (let lane = 0; lane < LANE_COUNT; lane++) {
+    const p = press[lane];
+    if (!p) continue;
+    const justReleased = !p.isDown && now - p.upAt < 90;
+    if (!p.isDown && !justReleased) continue;
+    const cx = lane * laneWidth + laneWidth / 2;
+    const col = LANE_HEX[lane] ?? "#fff";
+    const age = p.isDown ? Math.min(1, (now - p.downAt) / 90) : Math.max(0, 1 - (now - p.upAt) / 90);
+    const r = NOTE_RADIUS + 7 + age * 2;
+    const g = ctx.createRadialGradient(cx, hitLineY, 0, cx, hitLineY, r + 10);
+    g.addColorStop(0, hexToRgba(col, 0.3 + age * 0.25));
+    g.addColorStop(0.55, hexToRgba(col, 0.13 + age * 0.15));
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, hitLineY, r + 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = hexToRgba(col, 0.6 + age * 0.35);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, hitLineY, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 }
 
 /** Missed / bad notes: keep scrolling until past the bottom edge, then drop from the set. */
@@ -541,7 +677,8 @@ function paintMissSlidingNotes(
   width: number,
   height: number,
   missSlide: Set<number>,
-  lookAheadMs: number
+  lookAheadMs: number,
+  occludedInsideParent: ReadonlySet<number>
 ): void {
   if (missSlide.size === 0) return;
 
@@ -551,6 +688,10 @@ function paintMissSlidingNotes(
   const toRemove: number[] = [];
 
   for (const idx of missSlide) {
+    if (occludedInsideParent.has(idx)) {
+      toRemove.push(idx);
+      continue;
+    }
     const note = notes[idx];
     if (!note) {
       toRemove.push(idx);
@@ -577,16 +718,17 @@ function paintMissSlidingNotes(
       const top = Math.min(cy, cyTail);
       const h = Math.abs(cyTail - cy);
       const bodyW = NOTE_RADIUS * 2.35;
+      const rTail = Math.min(bodyW * 0.5, h * 0.5);
+      const rHead = Math.min(2.5, bodyW * 0.1);
+      const cornerRadii = [rTail, rTail, rHead, rHead] as const;
       ctx.globalAlpha = 0.35;
       ctx.fillStyle = hex;
-      ctx.beginPath();
-      ctx.roundRect(cx - bodyW / 2, top, bodyW, Math.max(h, 4), 7);
+      paintSustainBodyPath(ctx, cx, cy, cyTail, bodyW, cornerRadii);
       ctx.fill();
       ctx.globalAlpha = 0.55;
       ctx.strokeStyle = "rgba(255,82,82,0.55)";
       ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(cx - bodyW / 2, top, bodyW, Math.max(h, 4), 7);
+      paintSustainBodyPath(ctx, cx, cy, cyTail, bodyW, cornerRadii);
       ctx.stroke();
     }
 
@@ -626,39 +768,6 @@ function yFromTime(
   return hitLineY - dt * pxPerMs;
 }
 
-function paintSustainDebugOverlay(
-  ctx: CanvasRenderingContext2D,
-  activeSustains: Map<number, SustainVisual>,
-  positionMs: number,
-  width: number
-): void {
-  if (activeSustains.size === 0) return;
-  const rows = [...activeSustains.values()]
-    .sort((a, b) => a.endTime - b.endTime)
-    .slice(0, 10)
-    .map(
-      (s) =>
-        `S#${s.id}  t=${positionMs.toFixed(0)}  start=${s.startTime.toFixed(0)}  end=${s.endTime.toFixed(0)}  rem=${(s.endTime - positionMs).toFixed(0)}`
-    );
-  const lineH = 14;
-  const pad = 8;
-  const boxH = pad * 2 + lineH * (rows.length + 1);
-  const boxW = Math.min(width - 16, 360);
-  ctx.save();
-  ctx.globalAlpha = 0.9;
-  ctx.fillStyle = "rgba(0,0,0,0.55)";
-  ctx.fillRect(8, 8, boxW, boxH);
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = "#baffcf";
-  ctx.font = "12px monospace";
-  ctx.fillText(`Active sustains: ${activeSustains.size}`, 14, 8 + pad + lineH - 2);
-  for (let i = 0; i < rows.length; i++) {
-    ctx.fillStyle = "#e8f6ff";
-    ctx.fillText(rows[i]!, 14, 8 + pad + (i + 2) * lineH - 2);
-  }
-  ctx.restore();
-}
-
 function paintHitEffects(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -683,28 +792,11 @@ function paintHitEffects(
     const col = judgementFxColor(fx.judgement);
     const e = easeOutCubic(t);
 
-    // Brief bright bloom (perfect / great pop harder)
-    if (t < 0.22) {
-      const bloom = 1 - t / 0.22;
-      const br =
-        fx.judgement === "perfect"
-          ? NOTE_RADIUS + 22 * bloom
-          : NOTE_RADIUS + 14 * bloom;
-      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, br);
-      g.addColorStop(0, hexToRgba(col, 0.55 * bloom));
-      g.addColorStop(0.45, hexToRgba(col, 0.12 * bloom));
-      g.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(cx, cy, br, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Expanding rings (impact)
-    const rOuter = NOTE_RADIUS + 8 + e * HIT_RING_EXPANSION;
-    const alphaRing = (1 - t) * (fx.judgement === "perfect" ? 0.95 : 0.72);
+    // Minimal ring pulse (GH-style subtle impact)
+    const rOuter = NOTE_RADIUS + 2 + e * HIT_RING_EXPANSION;
+    const alphaRing = (1 - t) * (fx.judgement === "perfect" ? 0.72 : 0.56);
     ctx.strokeStyle = col;
-    ctx.lineWidth = Math.max(1.2, 3.2 - 2.1 * e);
+    ctx.lineWidth = Math.max(0.9, 2.0 - 1.1 * e);
     ctx.globalAlpha = alphaRing;
     ctx.beginPath();
     ctx.arc(cx, cy, rOuter, 0, Math.PI * 2);
@@ -712,20 +804,20 @@ function paintHitEffects(
 
     const t2 = Math.max(0, t - 0.1) / 0.9;
     const e2 = easeOutCubic(t2);
-    const rMid = NOTE_RADIUS + 4 + e2 * (HIT_RING_EXPANSION * 0.65);
-    ctx.globalAlpha = (1 - t2) * 0.45;
-    ctx.lineWidth = 1.5;
+    const rMid = NOTE_RADIUS + 1 + e2 * (HIT_RING_EXPANSION * 0.45);
+    ctx.globalAlpha = (1 - t2) * 0.3;
+    ctx.lineWidth = 1.1;
     ctx.beginPath();
     ctx.arc(cx, cy, rMid, 0, Math.PI * 2);
     ctx.stroke();
 
-    // Inner tick ring — crisp on perfect
+    // Tight inner tick ring — crisp on perfect only
     if (fx.judgement === "perfect" && t < 0.35) {
       const ti = t / 0.35;
-      const rTick = NOTE_RADIUS + 3 + (1 - ti) * 10;
-      ctx.globalAlpha = (1 - ti) * 0.9;
+      const rTick = NOTE_RADIUS + 1 + (1 - ti) * 4;
+      ctx.globalAlpha = (1 - ti) * 0.55;
       ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 1.2;
       ctx.beginPath();
       ctx.arc(cx, cy, rTick, 0, Math.PI * 2);
       ctx.stroke();

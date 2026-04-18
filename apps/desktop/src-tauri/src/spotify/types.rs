@@ -8,6 +8,8 @@ pub struct PlaybackStatePayload {
     pub position_ms: u64,
     pub track_id: Option<String>,
     pub track: Option<TrackPayload>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_percent: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize)]

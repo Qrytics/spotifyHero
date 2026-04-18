@@ -16,8 +16,7 @@ use tokio::sync::oneshot;
 pub const REDIRECT_URI: &str = "http://127.0.0.1:8888/callback";
 const AUTH_URL: &str = "https://accounts.spotify.com/authorize";
 const TOKEN_URL: &str = "https://accounts.spotify.com/api/token";
-const SCOPES: &str =
-    "user-read-playback-state user-read-currently-playing user-modify-playback-state";
+const SCOPES: &str = "user-read-playback-state user-read-currently-playing user-modify-playback-state user-read-email user-follow-read";
 
 #[derive(Clone)]
 struct OAuthWait {

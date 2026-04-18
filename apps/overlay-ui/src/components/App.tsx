@@ -9,20 +9,29 @@ import { useSpotifySync } from "../hooks/useSpotifySync.js";
 import { useChartGeneration } from "../hooks/useChartGeneration.js";
 import { useGameLoop } from "../hooks/useGameLoop.js";
 import { useKeybinds } from "../hooks/useKeybinds.js";
+import { useSpotifyProfileSync } from "../hooks/useSpotifyProfileSync.js";
 import { SpotifyDiagnosticsPanel } from "./SpotifyDiagnosticsPanel.js";
 import { SettingsPanel } from "./SettingsPanel.js";
 import { WindowChrome } from "./WindowChrome.js";
 import { loadTauriAppSettings } from "../lib/tauriSettings.js";
+import { LeaderboardPanel } from "./LeaderboardPanel.js";
 
 export function App(): React.ReactElement {
   const phase = useGameStore((s) => s.phase);
   const trackLifecycle = useGameStore((s) => s.trackLifecycle);
   const countdownUntilMs = useGameStore((s) => s.countdownUntilMs);
+  const chart = useGameStore((s) => s.chart);
+  const playback = useGameStore((s) => s.playback);
+  const session = useGameStore((s) => s.session);
+  const settings = useGameStore((s) => s.settings);
+  const usedAutoplayThisRound = useGameStore((s) => s.usedAutoplayThisRound);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
 
   // Core game hooks
   useSpotifySync();
+  useSpotifyProfileSync();
   useChartGeneration();
   useGameLoop();
   useKeybinds();
@@ -49,6 +58,8 @@ export function App(): React.ReactElement {
     trackLifecycle === "countdown" && countdownUntilMs !== null
       ? Math.max(1, Math.ceil((countdownUntilMs - countdownNowMs) / 1000))
       : null;
+  const activeTrackId = chart?.trackId ?? playback?.trackId ?? "";
+  const leaderboardEligibleForRanking = session ? !usedAutoplayThisRound : true;
 
   return (
     <div
@@ -76,7 +87,11 @@ export function App(): React.ReactElement {
           <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
             <NoteHighway />
           </div>
-          <PlayBottomBar onOpenSettings={() => setSettingsOpen(true)} />
+          <PlayBottomBar
+            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenLeaderboard={() => setLeaderboardOpen(true)}
+            leaderboardDisabled={!activeTrackId}
+          />
         </div>
       )}
 
@@ -94,17 +109,29 @@ export function App(): React.ReactElement {
           {trackLifecycle === "generating" ? "Generating chart…" : "Loading track…"}
         </div>
       )}
-      {trackLifecycle === "countdown" && (
-        <div className="countdown-overlay">
-          <div className="countdown-generating">Generating…</div>
-          <div className="countdown-bubble">{countdownStep ?? 1}</div>
-        </div>
-      )}
+      {/* Countdown overlay intentionally disabled: chart generation is fast enough now. */}
 
       {phase === "results" && <ResultsScreen />}
       {phase === "idle" && (
-        <IdleScreen onOpenSettings={() => setSettingsOpen(true)} />
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <IdleScreen onOpenSettings={() => setSettingsOpen(true)} />
+        </div>
       )}
+      <LeaderboardPanel
+        open={leaderboardOpen && !!activeTrackId}
+        onClose={() => setLeaderboardOpen(false)}
+        trackId={activeTrackId}
+        difficulty={settings.difficulty}
+        session={session}
+        eligibleForRanking={leaderboardEligibleForRanking}
+      />
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <SpotifyDiagnosticsPanel />
     </div>

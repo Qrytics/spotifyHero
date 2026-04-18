@@ -14,6 +14,7 @@ pub fn idle_playback() -> PlaybackStatePayload {
         position_ms: 0,
         track_id: None,
         track: None,
+        volume_percent: None,
     }
 }
 
@@ -130,11 +131,22 @@ fn parse_playback_body(body: &Value) -> PlaybackStatePayload {
     let track = item_to_track(item);
     let tid = track.id.clone();
 
+    let volume_percent = body
+        .get("device")
+        .and_then(|d| d.get("volume_percent"))
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_i64().map(|i| i.max(0) as u64))
+                .or_else(|| v.as_f64().map(|f| f.max(0.0).round() as u64))
+        })
+        .map(|n| (n.min(100)) as u8);
+
     PlaybackStatePayload {
         is_playing,
         position_ms: progress_ms,
         track_id: Some(tid),
         track: Some(track),
+        volume_percent,
     }
 }
 

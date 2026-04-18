@@ -132,14 +132,15 @@ export function SettingsPanel({ open, onClose }: Props): React.ReactElement | nu
         </div>
 
         <p style={{ fontSize: "9px", color: "var(--text-muted)", lineHeight: 1.4, margin: 0 }}>
-          Use <strong style={{ color: "var(--text)" }}>{formatKeybindLabel(draft.playKeybind)}</strong>{" "}
-          during a song to switch{" "}
-          <strong style={{ color: "var(--text)" }}>manual</strong> ↔{" "}
-          <strong style={{ color: "var(--text)" }}>autoplay</strong>.
+          <strong style={{ color: "var(--text)" }}>Lane keys</strong> hit notes and switch from{" "}
+          <strong style={{ color: "var(--text)" }}>autoplay</strong> to{" "}
+          <strong style={{ color: "var(--text)" }}>manual</strong> (no play key needed).{" "}
+          <strong style={{ color: "var(--text)" }}>{formatKeybindLabel(draft.playKeybind)}</strong>{" "}
+          is optional to toggle modes anytime.
         </p>
 
         <div>
-          <label style={labelStyle}>Play mode toggle key</label>
+          <label style={labelStyle}>Play mode toggle key (optional)</label>
           <input
             style={inputStyle}
             value={draft.playKeybind}

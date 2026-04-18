@@ -50,6 +50,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_playback_state,
+            commands::get_spotify_user_profile,
+            commands::get_spotify_followed_user_ids,
             commands::spotify_login,
             commands::spotify_logout,
             commands::spotify_connection_status,

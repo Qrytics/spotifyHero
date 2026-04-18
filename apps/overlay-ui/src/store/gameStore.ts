@@ -7,6 +7,12 @@ import type {
   ScoreEvent,
 } from "@spotifyhero/shared-types";
 import { AppSettingsSchema } from "@spotifyhero/shared-types";
+
+export type SpotifyUserProfile = {
+  id: string;
+  displayName: string;
+  email: string | null;
+};
 import type { PlayMode } from "@spotifyhero/gameplay-core";
 import { saveTauriAppSettings } from "../lib/tauriSettings.js";
 
@@ -82,6 +88,8 @@ interface GameState {
   lastScoreEvent: ScoreEvent | null;
   session: GameSession | null;
   usedAutoplayThisRound: boolean;
+  /** From Tauri `get_spotify_user_profile` — drive name + leaderboard `spotify_user_id`. */
+  spotifyUser: SpotifyUserProfile | null;
 
   // Actions
   setPhase: (phase: GamePhase) => void;
@@ -92,6 +100,7 @@ interface GameState {
   togglePlayMode: () => PlayMode;
   resetRound: () => void;
   updateSettings: (patch: Partial<AppSettings>) => void;
+  setSpotifyUser: (user: SpotifyUserProfile | null) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +123,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   lastScoreEvent: null,
   session: null,
   usedAutoplayThisRound: false,
+  spotifyUser: null,
 
   setPhase: (phase) => {
     const trackLifecycle: TrackLifecycleState =
@@ -218,8 +228,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       return {
         chart,
         phase,
-        trackLifecycle: "countdown",
-        countdownUntilMs: Date.now() + 3200,
+        trackLifecycle: "playing",
+        countdownUntilMs: null,
         sessionPlayMode: null,
         lastPlayPhase: nextLast,
       };
@@ -302,4 +312,5 @@ export const useGameStore = create<GameState>((set, get) => ({
           : {}),
       };
     }),
+  setSpotifyUser: (spotifyUser) => set({ spotifyUser }),
 }));

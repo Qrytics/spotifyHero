@@ -28,6 +28,7 @@ function createDefaultPoller(): SpotifyPoller {
       positionMs: 0,
       trackId: null,
       track: null,
+      volumePercent: null,
     },
     500
   );

@@ -12,6 +12,7 @@ import {
 import type { Chart } from "@spotifyhero/shared-types";
 import { playbackClock } from "../lib/playbackClock.js";
 import { resumeSpotifyPlayback } from "../lib/spotifyControl.js";
+import { isSpotifyPlaybackTooQuietForNotes } from "../lib/playbackVolumeGate.js";
 
 /** Grace after last chart event before we treat the chart as finished. */
 const CHART_FINISH_PAD_MS = 3000;
@@ -233,6 +234,7 @@ export function useGameLoop(): void {
 
       const state = useGameStore.getState();
       if (state.phase !== "manual") return;
+      if (isSpotifyPlaybackTooQuietForNotes(state.playback)) return;
 
       const pos = playbackClock.estimateMs();
       const engine = engineRef.current;
@@ -266,6 +268,11 @@ export function useGameLoop(): void {
 
       const liveChart = state.chart;
       if (!liveChart) return;
+
+      if (isSpotifyPlaybackTooQuietForNotes(state.playback)) {
+        rafRef.current = requestAnimationFrame(loop);
+        return;
+      }
 
       if (state.trackLifecycle === "countdown") {
         const countdownDone =
@@ -437,7 +444,10 @@ export function useGameLoop(): void {
       if (pastChartFinish && canFinishResults) {
         useGameStore.setState({ trackLifecycle: "ending" });
         const currentState = useGameStore.getState();
-        const session = engine.finalize(currentState.settings.playerName);
+        const displayName = currentState.spotifyUser?.displayName?.trim();
+        const session = engine.finalize(
+          displayName || currentState.settings.playerName
+        );
         currentState.setSession(session);
         return;
       }

@@ -210,25 +210,25 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px;
+  padding: 6px;
   background: rgba(0, 0, 0, 0.72);
 }
 
 .leaderboard-modal {
-  width: min(460px, 100%);
-  max-height: min(90vh, 620px);
-  overflow: auto;
+  width: min(336px, 100%);
+  max-height: min(86vh, 460px);
+  overflow: hidden;
   background: #14141c;
   border: 1px solid #2a2a38;
   border-radius: 10px;
-  padding: 12px;
+  padding: 10px;
 }
 
 .leaderboard-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .leaderboard-header h3 {
@@ -245,8 +245,10 @@ html, body, #root {
 
 .leaderboard-auth {
   display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  margin-bottom: 6px;
 }
 
 .leaderboard-auth input {
@@ -255,7 +257,8 @@ html, body, #root {
   border-radius: 6px;
   background: #101016;
   color: var(--text);
-  padding: 6px 8px;
+  padding: 5px 7px;
+  min-width: 0;
 }
 
 .leaderboard-auth button {
@@ -264,42 +267,44 @@ html, body, #root {
   background: var(--accent);
   color: #0d0f0d;
   font-weight: 700;
-  padding: 6px 10px;
+  padding: 5px 9px;
+  font-size: 10px;
+  width: 100%;
 }
 
 .leaderboard-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 10px;
+  gap: 8px;
 }
 
 .leaderboard-grid h4 {
-  font-size: 11px;
-  margin-bottom: 6px;
+  font-size: 10px;
+  margin-bottom: 4px;
 }
 
 .leaderboard-rows {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .leaderboard-row {
   display: grid;
   grid-template-columns: 34px 1fr auto;
-  gap: 6px;
-  font-size: 10px;
+  gap: 5px;
+  font-size: 9px;
   background: #10101a;
   border: 1px solid #252532;
   border-radius: 6px;
-  padding: 4px 6px;
+  padding: 3px 5px;
 }
 
 .leaderboard-empty,
 .leaderboard-error,
 .leaderboard-session {
-  font-size: 10px;
-  margin-bottom: 8px;
+  font-size: 9px;
+  margin-bottom: 6px;
 }
 
 .leaderboard-error {

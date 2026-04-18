@@ -136,14 +136,14 @@ export const DIFFICULTY_PARAMS: Record<
   expert: {
     densityMultiplier: 1.0,
     minGapMs: 58,
-    holdGapMinMs: 360,
+    holdGapMinMs: 220,
     holdGapMaxMs: 760,
     holdGapBeatFraction: 0.72,
-    minHoldDurationMs: 320,
-    holdMaxDurationMs: 520,
-    minSustainPercent: 0.08,
-    maxSustainPercent: 0.19,
-    sustainConfidenceMin: 0.66,
+    minHoldDurationMs: 210,
+    holdMaxDurationMs: 620,
+    minSustainPercent: 0.12,
+    maxSustainPercent: 0.28,
+    sustainConfidenceMin: 0.48,
     maxConsecutiveSustains: 2,
     silenceGate: {
       enterAmplitude: 0.03,
@@ -305,7 +305,7 @@ function sustainGapMaxForBpm(
 }
 
 function canAssignSustainAtIndex(
-  notes: readonly Note[],
+  notes: readonly SustainAssignmentCandidate[],
   index: number,
   sustainGapMinMs: number,
   sustainGapMaxMs: number,
@@ -314,15 +314,20 @@ function canAssignSustainAtIndex(
   sustainConfidenceMin: number
 ): { durationMs: number; confidence: number } | null {
   const head = notes[index];
-  const next = notes[index + 1];
-  if (!head || !next) return null;
-  const gap = next.timeMs - head.timeMs;
-  if (gap < sustainGapMinMs || gap > sustainGapMaxMs) return null;
-  const confidence = Math.min(head.confidence, next.confidence);
-  if (confidence < sustainConfidenceMin) return null;
-  const durationMs = Math.min(gap, holdMaxDurationMs);
-  if (durationMs < minHoldDurationMs) return null;
-  return { durationMs, confidence };
+  if (!head) return null;
+  for (let j = index + 1; j < notes.length; j++) {
+    const next = notes[j]!;
+    if (next.lane !== head.lane) continue;
+    const gap = next.timeMs - head.timeMs;
+    if (gap > sustainGapMaxMs) return null;
+    if (gap < sustainGapMinMs) continue;
+    const confidence = Math.min(head.confidence, next.confidence);
+    if (confidence < sustainConfidenceMin) return null;
+    const durationMs = Math.min(gap, holdMaxDurationMs);
+    if (durationMs < minHoldDurationMs) return null;
+    return { durationMs, confidence };
+  }
+  return null;
 }
 
 function assignSustainsWithConstraints(
@@ -600,6 +605,40 @@ function pickLaneDeterministic(
   return valid[idx]!;
 }
 
+function chordSizeForEvent(
+  difficulty: Difficulty,
+  trackId: string,
+  timeMs: number,
+  confidence: number
+): 1 | 2 | 3 | 4 {
+  if (confidence < 0.45) return 1;
+  let h = 2166136261;
+  for (let i = 0; i < trackId.length; i++) {
+    h = Math.imul(h ^ trackId.charCodeAt(i), 16777619);
+  }
+  h = Math.imul(h ^ Math.floor(timeMs), 2246822519);
+  const roll = (mix32(h) >>> 0) / 4294967296;
+  if (difficulty === "easy") {
+    if (roll < 0.035) return 2;
+    return 1;
+  }
+  if (difficulty === "medium") {
+    if (roll < 0.02) return 3;
+    if (roll < 0.095) return 2;
+    return 1;
+  }
+  if (difficulty === "hard") {
+    if (roll < 0.015) return 4;
+    if (roll < 0.07) return 3;
+    if (roll < 0.2) return 2;
+    return 1;
+  }
+  if (roll < 0.03) return 4;
+  if (roll < 0.12) return 3;
+  if (roll < 0.33) return 2;
+  return 1;
+}
+
 // ---------------------------------------------------------------------------
 // Step 1 – Deterministic signal-based chart generation
 // ---------------------------------------------------------------------------
@@ -707,6 +746,27 @@ export function generateDeterministicChart(
     placementSalt += 1;
     candidates.push({ timeMs: event.timeMs, lane, confidence: event.confidence });
     laneLastMs[lane] = event.timeMs;
+
+    if (validLanes.length > 1) {
+      const desiredSize = Math.min(
+        validLanes.length,
+        chordSizeForEvent(difficulty, trackId, event.timeMs, event.confidence)
+      );
+      if (desiredSize > 1) {
+        const extras = validLanes
+          .filter((l) => l !== lane)
+          .sort((a, b) => {
+            const ha = mix32(Math.imul(Math.floor(event.timeMs), 92821) ^ Math.imul(a + 1, 2654435761));
+            const hb = mix32(Math.imul(Math.floor(event.timeMs), 92821) ^ Math.imul(b + 1, 2654435761));
+            return (ha >>> 0) - (hb >>> 0);
+          })
+          .slice(0, desiredSize - 1);
+        for (const laneExtra of extras) {
+          candidates.push({ timeMs: event.timeMs, lane: laneExtra, confidence: event.confidence });
+          laneLastMs[laneExtra] = event.timeMs;
+        }
+      }
+    }
   }
 
   const initialNotes = assignSustainsWithConstraints(

@@ -4,18 +4,27 @@ import { formatKeybindLabel } from "../lib/keybindDisplay.js";
 
 type PlayBottomBarProps = {
   onOpenSettings: () => void;
+  onOpenLeaderboard: () => void;
+  leaderboardDisabled?: boolean;
 };
 
 /**
  * Bottom status strip — single horizontal row (no wrap) so narrow overlay windows stay readable.
  */
-export function PlayBottomBar({ onOpenSettings }: PlayBottomBarProps): React.ReactElement {
+export function PlayBottomBar({
+  onOpenSettings,
+  onOpenLeaderboard,
+  leaderboardDisabled = false,
+}: PlayBottomBarProps): React.ReactElement {
   const phase = useGameStore((s) => s.phase);
   const lastEvent = useGameStore((s) => s.lastScoreEvent);
   const settings = useGameStore((s) => s.settings);
 
-  const playLabel = formatKeybindLabel(settings.playKeybind);
-  const lanes = settings.laneKeys.map((k) => formatKeybindLabel(k)).join(" · ");
+  const laneLabels = settings.laneKeys.map((k) => {
+    const raw = k.trim();
+    return raw.length === 0 ? "?" : raw.toLowerCase();
+  });
+  const lanesTitle = settings.laneKeys.map((k) => formatKeybindLabel(k)).join(" · ");
 
   const modeLabel =
     phase === "autoplay"
@@ -91,23 +100,30 @@ export function PlayBottomBar({ onOpenSettings }: PlayBottomBarProps): React.Rea
         </span>
       ) : null}
 
-      <kbd
-        title="Toggle auto / manual"
+      <div
+        title={lanesTitle}
         style={{
-          fontSize: "8px",
-          fontFamily: "system-ui, Segoe UI, sans-serif",
-          fontWeight: 700,
-          padding: "2px 5px",
-          borderRadius: "4px",
-          background: "transparent",
-          border: "1px solid rgba(154,154,176,0.4)",
-          color: "#1db954",
+          display: "flex",
+          alignItems: "center",
+          gap: "3px",
           whiteSpace: "nowrap",
           flex: "0 0 auto",
         }}
       >
-        {playLabel}
-      </kbd>
+        {laneLabels.map((lane, idx) => (
+          <span
+            key={`${lane}-${idx}`}
+            style={{
+              fontSize: "8px",
+              fontWeight: 700,
+              color: "rgba(255,255,255,0.9)",
+              letterSpacing: "0.01em",
+            }}
+          >
+            {lane}
+          </span>
+        ))}
+      </div>
 
       {lastEvent ? (
         <span style={{ ...judgementStyle(lastEvent.judgement), flex: "0 0 auto" }}>
@@ -131,28 +147,25 @@ export function PlayBottomBar({ onOpenSettings }: PlayBottomBarProps): React.Rea
           marginLeft: "auto",
           display: "flex",
           alignItems: "center",
-          gap: "3px",
+          gap: "4px",
           minWidth: 0,
           flex: "1 1 auto",
           justifyContent: "flex-end",
         }}
       >
-        <span
-          title={lanes}
+        <button
+          type="button"
+          onClick={onOpenLeaderboard}
+          title="Leaderboard"
+          disabled={leaderboardDisabled}
+          className="play-bottom-settings-btn"
           style={{
-            fontSize: "8px",
-            fontWeight: 600,
-            color: "rgba(255,255,255,0.88)",
-            letterSpacing: "0.05em",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            minWidth: 0,
-            textAlign: "right",
+            opacity: leaderboardDisabled ? 0.45 : 1,
+            cursor: leaderboardDisabled ? "not-allowed" : "pointer",
           }}
         >
-          {lanes}
-        </span>
+          👥
+        </button>
         <button
           type="button"
           onClick={onOpenSettings}

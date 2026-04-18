@@ -274,6 +274,28 @@ describe("generateDeterministicChart", () => {
     expect(expertCounts.taps).toBeGreaterThan(hardCounts.taps);
   });
 
+  it("expert can generate simultaneous chord notes", () => {
+    const beats = makeBeatEvents(320, 90);
+    const chart = generateDeterministicChart("chords", beats, 166, {
+      difficulty: "expert",
+    });
+    const byTime = new Map<number, number>();
+    for (const note of chart.notes) {
+      byTime.set(note.timeMs, (byTime.get(note.timeMs) ?? 0) + 1);
+    }
+    const maxChord = Math.max(...byTime.values());
+    expect(maxChord).toBeGreaterThanOrEqual(2);
+  });
+
+  it("expert retains sustain notes on moderate tempo patterns", () => {
+    const beats = makeBeatEvents(180, 240);
+    const chart = generateDeterministicChart("sustain-expert", beats, 125, {
+      difficulty: "expert",
+    });
+    const counts = countTapHold(chart.notes);
+    expect(counts.holds).toBeGreaterThan(0);
+  });
+
   it("keeps sustain frequency within explicit per-difficulty bounds", () => {
     const beats = makeBeatEvents(220, 120);
     const diffs = ["easy", "medium", "hard", "expert"] as const;

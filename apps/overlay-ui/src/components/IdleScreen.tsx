@@ -99,111 +99,134 @@ export function IdleScreen({ onOpenSettings }: IdleProps): React.ReactElement {
     }
   };
 
+  const laneHint = settings.laneKeys.map((k) => formatKeybindLabel(k)).join(" ");
+
   return (
     <div
       style={{
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        gap: "10px",
-        padding: "16px",
+        alignItems: "stretch",
+        minHeight: 0,
+        padding: "10px 12px 12px",
         textAlign: "center",
       }}
     >
-      <div style={{ fontSize: "28px" }}>🎵</div>
-      <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--accent)" }}>
-        spotifyHero
-      </div>
-      <div style={{ fontSize: "10px", color: "var(--text-muted)", lineHeight: 1.5 }}>
-        {tauri ? (
-          <>
-            {connected
-              ? "Spotify linked — start playback in Spotify (Premium recommended)."
-              : "Connect your Spotify account, then press play in the Spotify app."}
-            <br />
-            Closed the Spotify login tab? Click <strong>Connect Spotify</strong> again to
-            reopen it.
-            <br />
-            Requires an active Spotify session (Web API). Premium needed for full
-            currently-playing data.
-          </>
-        ) : (
-          <>
-            Browser demo: open the console and run{" "}
-            <code style={{ fontSize: "9px", color: "var(--accent)" }}>
-              window.__mockPoller?.simulatePlay(...)
-            </code>{" "}
-            (see README).
-          </>
-        )}
-        <br />
-        During a song:{" "}
-        <kbd style={{ background: "#222", padding: "1px 4px", borderRadius: "3px" }}>
-          {formatKeybindLabel(settings.playKeybind)}
-        </kbd>{" "}
-        toggles manual ↔ autoplay. Lanes:{" "}
-        {settings.laneKeys.map((k) => formatKeybindLabel(k)).join(", ")}.
-        <br />
-        <span style={{ opacity: 0.75 }}>
-          Stuck? Press{" "}
-          <kbd style={{ background: "#222", padding: "1px 4px", borderRadius: "3px" }}>
-            Ctrl+Shift+D
-          </kbd>{" "}
-          for Spotify debug (copy JSON for support).
-        </span>
-      </div>
-
-      {tauri && spotifyApi403 && (
-        <div
-          style={{
-            maxWidth: "300px",
-            marginTop: "4px",
-            padding: "10px 12px",
-            borderRadius: "8px",
-            border: "1px solid rgba(220, 160, 60, 0.55)",
-            background: "rgba(60, 45, 20, 0.45)",
-            fontSize: "10px",
-            lineHeight: 1.5,
-            color: "#e8d4b0",
-            textAlign: "left",
-          }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: "6px", color: "#ffb84d" }}>
-            Spotify API blocked (403)
-          </div>
-          <p style={{ margin: "0 0 8px 0" }}>
-            Your app is probably in{" "}
-            <strong style={{ color: "#fff" }}>Development mode</strong> on the Spotify
-            Developer Dashboard. Add the <strong style={{ color: "#fff" }}>same email</strong>{" "}
-            you use for Spotify under{" "}
-            <strong style={{ color: "#fff" }}>Dashboard → your app → Settings → User Management</strong>
-            , then use <strong style={{ color: "#fff" }}>Disconnect</strong> and connect again
-            here.
-          </p>
-          <a
-            href="https://developer.spotify.com/dashboard"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: "#8cf", fontWeight: 600 }}
-          >
-            Open Spotify Developer Dashboard
-          </a>
+      {/* Scrolls when the overlay window is short — keeps action buttons visible below */}
+      <div
+        className="idle-screen-scroll thin-scrollbar"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          overflowX: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "8px",
+          paddingBottom: "4px",
+        }}
+      >
+        <div style={{ fontSize: "24px", lineHeight: 1 }}>🎵</div>
+        <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--accent)" }}>
+          spotifyHero
         </div>
-      )}
-
-      {tauri && (
         <div
           style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: "8px",
-            marginTop: "6px",
-            alignItems: "center",
+            fontSize: "9px",
+            color: "var(--text-muted)",
+            lineHeight: 1.45,
+            maxWidth: "280px",
           }}
         >
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", justifyContent: "center" }}>
+          {tauri ? (
+            connected ? (
+              <>
+                Linked — start music in Spotify.
+                <br />
+                Premium recommended for timing.
+              </>
+            ) : (
+              <>
+                Connect, then press play in Spotify.
+                <br />
+                Reopen login: tap Connect again.
+              </>
+            )
+          ) : (
+            <>
+              Demo: console →{" "}
+              <code style={{ fontSize: "8px", color: "var(--accent)" }}>
+                window.__mockPoller?.simulatePlay(...)
+              </code>
+            </>
+          )}
+        </div>
+        {tauri && (
+          <div
+            style={{
+              fontSize: "8px",
+              color: "rgba(255,255,255,0.45)",
+              lineHeight: 1.35,
+              maxWidth: "280px",
+            }}
+          >
+            Lanes {laneHint} · optional {formatKeybindLabel(settings.playKeybind)} ·{" "}
+            <kbd style={{ background: "#1a1a1f", padding: "0 3px", borderRadius: "3px" }}>
+              Ctrl+Shift+D
+            </kbd>{" "}
+            debug
+          </div>
+        )}
+
+        {tauri && spotifyApi403 && (
+          <div
+            style={{
+              maxWidth: "280px",
+              width: "100%",
+              padding: "8px 10px",
+              borderRadius: "8px",
+              border: "1px solid rgba(220, 160, 60, 0.5)",
+              background: "rgba(60, 45, 20, 0.4)",
+              fontSize: "9px",
+              lineHeight: 1.45,
+              color: "#e8d4b0",
+              textAlign: "left",
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: "4px", color: "#ffb84d" }}>
+              Spotify API 403
+            </div>
+            <p style={{ margin: "0 0 6px 0" }}>
+              Dev dashboard: add your Spotify email under User Management, then Disconnect and
+              connect here.
+            </p>
+            <a
+              href="https://developer.spotify.com/dashboard"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "#8cf", fontWeight: 600 }}
+            >
+              Dashboard
+            </a>
+          </div>
+        )}
+      </div>
+
+      <div
+        style={{
+          flexShrink: 0,
+          display: "flex",
+          flexDirection: "column",
+          gap: "6px",
+          alignItems: "center",
+          paddingTop: "8px",
+          borderTop: "1px solid rgba(60,60,70,0.5)",
+        }}
+      >
+        {tauri && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", justifyContent: "center" }}>
             {onOpenSettings && (
               <button
                 type="button"
@@ -258,12 +281,12 @@ export function IdleScreen({ onOpenSettings }: IdleProps): React.ReactElement {
               </button>
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      {err && (
-        <div style={{ fontSize: "10px", color: "#f66", maxWidth: "280px" }}>{err}</div>
-      )}
+        {err && (
+          <div style={{ fontSize: "9px", color: "#f66", maxWidth: "260px" }}>{err}</div>
+        )}
+      </div>
     </div>
   );
 }

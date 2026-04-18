@@ -1,7 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  type SupabaseClientConfig,
+  SupabaseLeaderboardClient,
+} from "@spotifyhero/leaderboard-client";
 import type { Difficulty, GameSession, LeaderboardEntry } from "@spotifyhero/shared-types";
-import { OfflineLeaderboardClient, SupabaseLeaderboardClient } from "@spotifyhero/leaderboard-client";
 import { useGameStore } from "../store/gameStore.js";
 
 type Props = {
@@ -9,8 +11,8 @@ type Props = {
   onClose: () => void;
   trackId: string;
   difficulty: Difficulty;
-  session: GameSession;
-  eligibleForRanking: boolean;
+  session: GameSession | null;
+  eligibleForRanking?: boolean;
 };
 
 type LeaderboardData = {
@@ -18,58 +20,55 @@ type LeaderboardData = {
   friends: LeaderboardEntry[];
 };
 
+const LEADERBOARD_LIMIT = 8;
+
+async function fetchFollowedSpotifyUserIdsTauri(): Promise<string[]> {
+  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+    return [];
+  }
+  const { invoke } = await import("@tauri-apps/api/core");
+  try {
+    return await invoke<string[]>("get_spotify_followed_user_ids");
+  } catch {
+    return [];
+  }
+}
+
 export function LeaderboardPanel({
   open,
   onClose,
   trackId,
   difficulty,
   session,
-  eligibleForRanking,
+  eligibleForRanking = true,
 }: Props): React.ReactElement | null {
   const settings = useGameStore((s) => s.settings);
-  const [email, setEmail] = useState("");
-  const [authSession, setAuthSession] = useState<Session | null>(null);
+  const spotifyUser = useGameStore((s) => s.spotifyUser);
   const [rows, setRows] = useState<LeaderboardData>({ global: [], friends: [] });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submittedSessionIdsRef = useRef<Set<string>>(new Set());
 
-  const supabase: SupabaseClient | null = useMemo(() => {
-    if (!settings.supabaseUrl || !settings.supabaseAnonKey) return null;
-    return createClient(settings.supabaseUrl, settings.supabaseAnonKey);
-  }, [settings.supabaseAnonKey, settings.supabaseUrl]);
-
   useEffect(() => {
-    if (!supabase) return;
-    void supabase.auth.getSession().then(({ data }) => {
-      setAuthSession(data.session ?? null);
-    });
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setAuthSession(nextSession);
-    });
-    return () => data.subscription.unsubscribe();
-  }, [supabase]);
-
-  useEffect(() => {
-    if (!open || !supabase) return;
+    if (!open || !settings.supabaseUrl || !settings.supabaseAnonKey) return;
     let cancelled = false;
     setBusy(true);
     setError(null);
     void (async () => {
       try {
-        const sessionToken = authSession?.access_token;
-        const userId = authSession?.user.id;
-        const client = sessionToken
-          ? new SupabaseLeaderboardClient({
-              url: settings.supabaseUrl!,
-              anonKey: settings.supabaseAnonKey!,
-              ...(settings.playerName ? { playerName: settings.playerName } : {}),
-              accessToken: sessionToken,
-              ...(userId ? { userId } : {}),
-            })
-          : new OfflineLeaderboardClient();
+        const clientCfg: SupabaseClientConfig = {
+          url: settings.supabaseUrl!,
+          anonKey: settings.supabaseAnonKey!,
+          playerName:
+            spotifyUser?.displayName ?? settings.playerName ?? "Anonymous",
+        };
+        if (spotifyUser?.id) {
+          clientCfg.spotifyUserId = spotifyUser.id;
+        }
+        const client = new SupabaseLeaderboardClient(clientCfg);
 
         if (
+          session &&
           eligibleForRanking &&
           !submittedSessionIdsRef.current.has(session.id)
         ) {
@@ -77,25 +76,28 @@ export function LeaderboardPanel({
           submittedSessionIdsRef.current.add(session.id);
         }
 
-        const global = (await client.getLeaderboard(trackId, difficulty, 25)).entries;
-        let friendIds: string[] = [];
-        if (sessionToken && userId) {
-          const { data, error: followsError } = await supabase
-            .from("follows")
-            .select("followee_id")
-            .eq("follower_id", userId);
-          if (followsError) {
-            throw followsError;
-          }
-          friendIds = (data ?? [])
-            .map((row) => String((row as { followee_id?: string }).followee_id ?? ""))
-            .filter(Boolean);
-        }
-        const friends = (
-          await client.getFriendLeaderboard(trackId, difficulty, friendIds, 25)
+        const global = (
+          await client.getLeaderboard(trackId, difficulty, LEADERBOARD_LIMIT)
         ).entries;
+
+        const friendSpotifyIds = await fetchFollowedSpotifyUserIdsTauri();
+        const friends =
+          friendSpotifyIds.length > 0
+            ? await client.getFriendLeaderboardForSpotifyUsers(
+                trackId,
+                difficulty,
+                friendSpotifyIds,
+                LEADERBOARD_LIMIT
+              )
+            : await client.getFriendLeaderboard(
+                trackId,
+                difficulty,
+                [],
+                LEADERBOARD_LIMIT
+              );
+
         if (!cancelled) {
-          setRows({ global, friends });
+          setRows({ global, friends: friends.entries });
         }
       } catch (err) {
         if (!cancelled) {
@@ -109,62 +111,59 @@ export function LeaderboardPanel({
       cancelled = true;
     };
   }, [
-    authSession?.access_token,
-    authSession?.user.id,
     difficulty,
+    eligibleForRanking,
     open,
-    session,
+    session?.id,
     settings.playerName,
     settings.supabaseAnonKey,
     settings.supabaseUrl,
-    supabase,
+    spotifyUser?.displayName,
+    spotifyUser?.id,
     trackId,
   ]);
 
   if (!open) return null;
 
-  const sendMagicLink = async (): Promise<void> => {
-    if (!supabase || !email.trim()) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const { error: signInError } = await supabase.auth.signInWithOtp({
-        email: email.trim(),
-      });
-      if (signInError) throw signInError;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const profileLine = spotifyUser
+    ? `Playing as ${spotifyUser.displayName}${
+        spotifyUser.email ? ` · ${spotifyUser.email}` : ""
+      }`
+    : settings.playerName
+      ? `Playing as ${settings.playerName}`
+      : null;
 
   return (
-    <div className="leaderboard-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+    <div
+      className="leaderboard-backdrop"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
       <div className="leaderboard-modal thin-scrollbar">
         <div className="leaderboard-header">
           <h3>Leaderboard</h3>
-          <button type="button" onClick={onClose}>×</button>
+          <button type="button" onClick={onClose}>
+            ×
+          </button>
         </div>
         {!settings.supabaseUrl || !settings.supabaseAnonKey ? (
           <p className="leaderboard-empty">
             Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to enable online leaderboards.
           </p>
-        ) : authSession ? (
-          <p className="leaderboard-session">
-            Signed in as {authSession.user.email ?? authSession.user.id}
-          </p>
         ) : (
-          <div className="leaderboard-auth">
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="name@example.com"
-            />
-            <button type="button" onClick={() => void sendMagicLink()} disabled={busy}>
-              Send magic link
-            </button>
-          </div>
+          <>
+            {profileLine ? (
+              <p className="leaderboard-session">{profileLine}</p>
+            ) : (
+              <p className="leaderboard-empty">
+                Connect Spotify in the app — your display name is used automatically.
+              </p>
+            )}
+            <p className="leaderboard-empty" style={{ opacity: 0.75 }}>
+              Friends list uses Spotify accounts you follow (scope: user-follow-read). Add{" "}
+              <code style={{ fontSize: "9px" }}>spotify_user_id</code> to your Supabase table
+              (see docs) for friend ranks.
+            </p>
+          </>
         )}
         {eligibleForRanking === false && (
           <p className="leaderboard-empty">

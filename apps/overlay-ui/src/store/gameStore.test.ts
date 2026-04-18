@@ -40,6 +40,7 @@ function playback(
     positionMs: patch.positionMs,
     trackId: patch.trackId ?? null,
     track: patch.track ?? null,
+    volumePercent: patch.volumePercent ?? null,
   };
 }
 

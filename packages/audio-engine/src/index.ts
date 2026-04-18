@@ -74,6 +74,7 @@ export class MockSpotifyPoller implements SpotifyPoller {
       positionMs: 0,
       trackId: null,
       track: null,
+      volumePercent: null,
     },
     pollIntervalMs = 500
   ) {

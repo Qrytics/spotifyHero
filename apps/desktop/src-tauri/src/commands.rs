@@ -1,6 +1,7 @@
 use crate::spotify::{
-    clear_tokens, ensure_access_token, fetch_current_playback, idle_playback, load_store,
-    run_login, PlaybackStatePayload,
+    clear_tokens, ensure_access_token, fetch_current_playback, fetch_current_user,
+    fetch_followed_user_ids, idle_playback, load_store, run_login, PlaybackStatePayload,
+    SpotifyUserPayload,
 };
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -140,6 +141,28 @@ pub async fn get_playback_state(app: tauri::AppHandle) -> Result<PlaybackStatePa
         Err(e) if e.contains("rate limited") => Ok(idle_playback()),
         Err(e) => Err(e),
     }
+}
+
+/// Spotify profile for leaderboards (display name, optional email). Requires reconnect if scopes were upgraded.
+#[command]
+pub async fn get_spotify_user_profile(
+    app: tauri::AppHandle,
+) -> Result<Option<SpotifyUserPayload>, String> {
+    let Ok(client_id) = std::env::var("SPOTIFY_CLIENT_ID") else {
+        return Ok(None);
+    };
+    let http = http_client();
+    fetch_current_user(&app, http, &client_id).await
+}
+
+/// Spotify user IDs you follow (`user-follow-read`). Used for friend leaderboards.
+#[command]
+pub async fn get_spotify_followed_user_ids(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let Ok(client_id) = std::env::var("SPOTIFY_CLIENT_ID") else {
+        return Ok(Vec::new());
+    };
+    let http = http_client();
+    fetch_followed_user_ids(&app, http, &client_id).await
 }
 
 #[command]

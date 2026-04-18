@@ -3,27 +3,46 @@ import { useGameStore } from "../store/gameStore.js";
 import { toggleSpotifyDebugPanel } from "../lib/spotifyDiagnostics.js";
 import { eventMatchesPlayKey } from "../lib/keybindDisplay.js";
 
+function dispatchLaneDown(laneIndex: number): void {
+  window.dispatchEvent(
+    new CustomEvent("spotifyhero:lanedown", { detail: { lane: laneIndex } })
+  );
+}
+
+function dispatchLaneHit(laneIndex: number): void {
+  window.dispatchEvent(
+    new CustomEvent("spotifyhero:lanehit", {
+      detail: { lane: laneIndex, timeMs: Date.now() },
+    })
+  );
+}
+
+function dispatchLaneUp(laneIndex: number): void {
+  window.dispatchEvent(
+    new CustomEvent("spotifyhero:laneup", { detail: { lane: laneIndex } })
+  );
+}
+
 /**
  * useKeybinds
  *
  * Registers global keyboard listeners for:
- *   - Play/Autoplay toggle (Space by default)
- *   - Lane inputs (d, f, j, k by default) in manual mode
+ *   - Optional play key: toggles autoplay ↔ manual (default Space)
+ *   - Lane keys: play hits; first press in autoplay switches to manual (no play key needed)
  */
 export function useKeybinds(): void {
   const settings = useGameStore((s) => s.settings);
   const togglePlayMode = useGameStore((s) => s.togglePlayMode);
-  const phase = useGameStore((s) => s.phase);
-  const chart = useGameStore((s) => s.chart);
 
   useEffect(() => {
     const { playKeybind, laneKeys } = settings;
 
     const onKeyDown = (e: KeyboardEvent) => {
-      // Prevent key repeat spam
       if (e.repeat) return;
-      const el = e.target as HTMLElement | null;
-      if (el?.closest?.("input, textarea, select, [contenteditable=true]")) {
+      const targetEl = e.target as HTMLElement | null;
+      if (
+        targetEl?.closest?.("input, textarea, select, [contenteditable=true]")
+      ) {
         return;
       }
       const key = e.key.toLowerCase();
@@ -38,8 +57,8 @@ export function useKeybinds(): void {
         return;
       }
 
-      // Toggle autoplay ↔ manual (Space must match ev.code / ev.key)
       if (eventMatchesPlayKey(e, playKeybind)) {
+        const { phase } = useGameStore.getState();
         if (phase === "autoplay" || phase === "manual") {
           e.preventDefault();
           togglePlayMode();
@@ -47,45 +66,34 @@ export function useKeybinds(): void {
         return;
       }
 
-      // Lane hits in manual mode
-      if (phase === "manual" && chart) {
-        const laneIndex = laneKeys.findIndex(
-          (k) => k.toLowerCase() === key
-        );
-        if (laneIndex >= 0) {
-          window.dispatchEvent(
-            new CustomEvent("spotifyhero:lanedown", {
-              detail: { lane: laneIndex },
-            })
-          );
-          window.dispatchEvent(
-            new CustomEvent("spotifyhero:lanehit", {
-              detail: { lane: laneIndex, timeMs: Date.now() },
-            })
-          );
-        }
+      const laneIndex = laneKeys.findIndex((k) => k.toLowerCase() === key);
+      if (laneIndex < 0) return;
+
+      const { phase, chart } = useGameStore.getState();
+      if (!chart || (phase !== "autoplay" && phase !== "manual")) return;
+
+      e.preventDefault();
+      if (phase === "autoplay") {
+        togglePlayMode();
       }
+      dispatchLaneDown(laneIndex);
+      dispatchLaneHit(laneIndex);
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
-      const el = e.target as HTMLElement | null;
-      if (el?.closest?.("input, textarea, select, [contenteditable=true]")) {
+      const targetEl = e.target as HTMLElement | null;
+      if (
+        targetEl?.closest?.("input, textarea, select, [contenteditable=true]")
+      ) {
         return;
       }
       const key = e.key.toLowerCase();
+      const laneIndex = laneKeys.findIndex((k) => k.toLowerCase() === key);
+      if (laneIndex < 0) return;
 
-      if (phase === "manual" && chart) {
-        const laneIndex = laneKeys.findIndex(
-          (k) => k.toLowerCase() === key
-        );
-        if (laneIndex >= 0) {
-          window.dispatchEvent(
-            new CustomEvent("spotifyhero:laneup", {
-              detail: { lane: laneIndex },
-            })
-          );
-        }
-      }
+      const { phase, chart } = useGameStore.getState();
+      if (phase !== "manual" || !chart) return;
+      dispatchLaneUp(laneIndex);
     };
 
     window.addEventListener("keydown", onKeyDown);
@@ -94,5 +102,5 @@ export function useKeybinds(): void {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
     };
-  }, [settings, phase, chart, togglePlayMode]);
+  }, [settings, togglePlayMode]);
 }

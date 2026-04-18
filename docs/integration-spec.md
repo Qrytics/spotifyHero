@@ -4,8 +4,9 @@
 
 ### Auth flow
 - PKCE OAuth 2.0.
-- Scopes required: `user-read-playback-state`, `user-read-currently-playing`.
-- Redirect URI: `http://localhost:8888/callback` (loopback, no HTTPS needed for desktop).
+- Scopes required: `user-read-playback-state`, `user-read-currently-playing`, `user-modify-playback-state`, `user-read-email` (profile + leaderboard name), `user-follow-read` (friend leaderboard via Spotify people you follow).
+- Redirect URI: `http://127.0.0.1:8888/callback` (loopback, no HTTPS needed for desktop).
+- After changing scopes, the user must **disconnect and connect Spotify again** so Spotify issues a token with the new scopes.
 - Tokens stored via `tauri-plugin-store` (encrypted on macOS via Keychain).
 
 ### Polling
@@ -33,10 +34,24 @@ create table leaderboard_entries (
   played_at     timestamptz not null,
   player_name   text not null,
   judgements    jsonb not null,
-  created_at    timestamptz default now()
+  created_at    timestamptz default now(),
+  -- Optional: ties scores to Spotify user id for “Friends” filter (people you follow on Spotify)
+  spotify_user_id text,
+  -- Optional: legacy Supabase auth user id if you use auth-linked rows
+  user_id       uuid
 );
 
 create index on leaderboard_entries (track_id, difficulty, score desc);
+create index if not exists leaderboard_entries_spotify_user_id_idx
+  on leaderboard_entries (spotify_user_id)
+  where spotify_user_id is not null;
+```
+
+If you already created the table without `spotify_user_id`:
+
+```sql
+alter table leaderboard_entries add column if not exists spotify_user_id text;
+alter table leaderboard_entries add column if not exists user_id uuid;
 ```
 
 ### Row-level security

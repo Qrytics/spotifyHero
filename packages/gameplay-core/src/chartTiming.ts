@@ -2,11 +2,11 @@ import type { Chart, Note } from "@spotifyhero/shared-types";
 
 /**
  * Ms after song start before any chart note is judged or drawn.
- * Matches Spotify wall time — first notes hit at `note.timeMs + CHART_LEAD_IN_MS`.
- * Prevents mass-miss when the chart mounts slightly behind playback, and gives a
- * short empty runway before the highway appears.
+ * Keep this small so chart timing stays locked to audible playback.
+ * Countdown/track lifecycle already handles generation safety; large lead-ins
+ * make gameplay feel delayed versus the music.
  */
-export const CHART_LEAD_IN_MS = 4000;
+export const CHART_LEAD_IN_MS = 0;
 
 export function noteHeadTimeMs(note: Note, leadInMs: number): number {
   return note.timeMs + leadInMs;
