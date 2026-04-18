@@ -1,0 +1,23 @@
+{
+  "name": "spotifyhero-monorepo",
+  "version": "0.0.1",
+  "private": true,
+  "description": "spotifyHero – Spotify-driven rhythm overlay game",
+  "scripts": {
+    "install:all": "pnpm install",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "build:ui": "pnpm --filter overlay-ui build",
+    "dev:ui": "pnpm --filter overlay-ui dev",
+    "dev:desktop": "pnpm --filter desktop dev",
+    "type-check": "pnpm -r type-check"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
+}
