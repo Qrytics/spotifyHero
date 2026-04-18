@@ -92,6 +92,16 @@ function notesScrollingRegion(
   );
 }
 
+function chartStartPlaybackMs(chart: Chart): number {
+  if (chart.notes.length === 0) return 0;
+  let min = Infinity;
+  for (const note of chart.notes) {
+    const t = noteHeadTimeMs(note, CHART_LEAD_IN_MS);
+    if (t < min) min = t;
+  }
+  return Number.isFinite(min) ? min : 0;
+}
+
 /**
  * useGameLoop
  *
@@ -132,6 +142,10 @@ export function useGameLoop(): void {
   const mountStaleResyncDoneRef = useRef(false);
   /** Consecutive tap misses while no lane keys held (manual mode AFK detection). */
   const consecutiveAfkMissRef = useRef(0);
+  const chartBoundsRef = useRef<{ startMs: number; endMs: number }>({
+    startMs: 0,
+    endMs: 0,
+  });
 
   useEffect(() => {
     if (!chart) return;
@@ -157,6 +171,10 @@ export function useGameLoop(): void {
     sawPlayheadInChartTailRef.current = false;
     mountStaleResyncDoneRef.current = false;
     consecutiveAfkMissRef.current = 0;
+    chartBoundsRef.current = {
+      startMs: chartStartPlaybackMs(chart),
+      endMs: chartEndPlaybackMs(chart, CHART_LEAD_IN_MS),
+    };
     playModeRef.current.setMode(settings.autoplay ? "autoplay" : "manual");
     syncClockToStorePlayback(chart);
     clockSyncedTrackRef.current = chart.trackId;
@@ -232,9 +250,18 @@ export function useGameLoop(): void {
     const loop = () => {
       const state = useGameStore.getState();
       if (state.phase !== "autoplay" && state.phase !== "manual") return;
+      if (state.trackLifecycle === "countdown") {
+        useGameStore.setState({ trackLifecycle: "playing" });
+      }
 
       const liveChart = state.chart;
       if (!liveChart) return;
+      if (state.playback?.trackId !== liveChart.trackId) {
+        windowManagerRef.current = null;
+        engineRef.current = null;
+        useGameStore.setState({ trackLifecycle: "ending" });
+        return;
+      }
 
       if (clockSyncedTrackRef.current !== liveChart.trackId) {
         syncClockToStorePlayback(liveChart);
@@ -247,7 +274,7 @@ export function useGameLoop(): void {
 
       loopFramesForChartRef.current += 1;
 
-      const endMs = chartEndPlaybackMs(liveChart, CHART_LEAD_IN_MS);
+      const { startMs, endMs } = chartBoundsRef.current;
       const sinceChartMount =
         performance.now() - chartMountPerfRef.current;
 
@@ -269,23 +296,25 @@ export function useGameLoop(): void {
       if (
         endMs > 0 &&
         !sawPlayheadInChartTailRef.current &&
-        pos > endMs + CHART_FINISH_PAD_MS &&
+        pos > endMs &&
         loopFramesForChartRef.current <= 90
       ) {
         syncClockToStorePlayback(liveChart);
         pos = playbackClock.estimateMs();
       }
 
-      if (endMs <= 0 || pos <= endMs + CHART_FINISH_PAD_MS) {
+      if (endMs <= 0 || pos <= endMs) {
         sawPlayheadInChartTailRef.current = true;
       }
 
+      const boundedPos = Math.min(Math.max(pos, startMs), endMs || pos);
+
       const prev = lastPlaybackPosRef.current;
-      lastPlaybackPosRef.current = pos;
+      lastPlaybackPosRef.current = boundedPos;
       // Large *backward* jumps (seek) need a scoring reset. Forward jumps (catch-up after
       // throttled rAF or Spotify poll) must NOT clear active holds or lane keys — that was
       // causing sustains to vanish / fail while the player still held the key.
-      if (prev !== null && pos < prev - 3000) {
+      if (prev !== null && boundedPos < prev - 3000) {
         engine.resetSeekState();
       }
 
@@ -312,10 +341,10 @@ export function useGameLoop(): void {
       if (playModeRef.current.isAutoplay()) {
         const windowManager = windowManagerRef.current;
         if (windowManager) {
-          const hits = windowManager.getAutoplayHits(pos);
+          const hits = windowManager.getAutoplayHits(boundedPos);
           for (const { index } of hits) {
             if (!engine.isResolved(index)) {
-              const event = engine.onNoteHit(index, pos);
+              const event = engine.onNoteHit(index, boundedPos);
               if (event) {
                 useGameStore.getState().onScoreEvent(event, noteCount);
               }
@@ -324,7 +353,7 @@ export function useGameLoop(): void {
         }
       }
 
-      const holdEvents = engine.advanceHolds(pos, laneHeld);
+      const holdEvents = engine.advanceHolds(boundedPos, laneHeld);
       for (const ev of holdEvents) {
         useGameStore.getState().onScoreEvent(ev, noteCount);
         if (
@@ -335,7 +364,7 @@ export function useGameLoop(): void {
         }
       }
 
-      const missed = engine.evaluateMisses(pos);
+      const missed = engine.evaluateMisses(boundedPos);
       for (const event of missed) {
         useGameStore.getState().onScoreEvent(event, noteCount);
       }
@@ -344,7 +373,7 @@ export function useGameLoop(): void {
         if (lanesHeldRef.current.some(Boolean)) {
           consecutiveAfkMissRef.current = 0;
         } else if (
-          notesScrollingRegion(pos, endMs, liveChart.notes.length)
+          notesScrollingRegion(boundedPos, endMs, liveChart.notes.length)
         ) {
           for (const ev of missed) {
             if (ev.judgement !== "miss") continue;
@@ -365,13 +394,14 @@ export function useGameLoop(): void {
       }
 
       const pastChartFinish =
-        endMs > 0 && pos > endMs + CHART_FINISH_PAD_MS;
+        endMs > 0 && pos >= endMs;
       const canFinishResults =
         sawPlayheadInChartTailRef.current ||
         (loopFramesForChartRef.current > FINISH_STALE_WAIT_FRAMES &&
           allNotesResolved(engine, liveChart));
 
       if (pastChartFinish && canFinishResults) {
+        useGameStore.setState({ trackLifecycle: "ending" });
         const currentState = useGameStore.getState();
         const session = engine.finalize(currentState.settings.playerName);
         currentState.setSession(session);
