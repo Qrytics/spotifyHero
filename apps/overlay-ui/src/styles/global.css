@@ -126,6 +126,84 @@ html, body, #root {
   color: var(--text);
 }
 
+.sh-switch-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.sh-switch-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sh-switch-title {
+  font-size: 9px;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.sh-switch-subtitle {
+  font-size: 8px;
+  color: #666;
+  line-height: 1.25;
+}
+
+.sh-switch-input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  pointer-events: none;
+}
+
+.sh-switch-track {
+  --switch-track-w: 36px;
+  --switch-track-h: 20px;
+  --switch-thumb: 16px;
+  --switch-pad: 2px;
+  position: relative;
+  width: var(--switch-track-w);
+  height: var(--switch-track-h);
+  border-radius: 999px;
+  background: #2a2a32;
+  border: 1px solid #3b3b46;
+  overflow: hidden;
+  flex: 0 0 var(--switch-track-w);
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.sh-switch-thumb {
+  position: absolute;
+  top: 50%;
+  left: var(--switch-pad);
+  width: var(--switch-thumb);
+  height: var(--switch-thumb);
+  border-radius: 50%;
+  background: #fff;
+  transform: translateX(0) translateY(-50%);
+  transition: transform 120ms ease;
+}
+
+.sh-switch-input:checked + .sh-switch-track {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.sh-switch-input:checked + .sh-switch-track .sh-switch-thumb {
+  transform: translateX(calc(var(--switch-track-w) - var(--switch-thumb) - (var(--switch-pad) * 2))) translateY(-50%);
+}
+
+.sh-switch-input:focus-visible + .sh-switch-track {
+  outline: 2px solid rgba(255, 255, 255, 0.65);
+  outline-offset: 2px;
+}
+
 /* Scroll speed — green fill + white thumb share one rounded capsule (accent ring on thumb) */
 .speed-range {
   -webkit-appearance: none;
@@ -153,7 +231,6 @@ html, body, #root {
   border-radius: 999px;
   border: 2px solid var(--accent);
   background: #ffffff;
-  box-shadow: -100vmax 0 0 100vmax var(--accent);
 }
 
 .speed-range::-moz-range-track {

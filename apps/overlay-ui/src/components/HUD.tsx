@@ -28,10 +28,13 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
 export function HUD(): React.ReactElement {
   const score = useGameStore((s) => s.score);
   const combo = useGameStore((s) => s.combo);
+  const comboMilestoneSeq = useGameStore((s) => s.comboMilestoneSeq);
+  const comboBreakSeq = useGameStore((s) => s.comboBreakSeq);
   const playback = useGameStore((s) => s.playback);
 
   const trackName = playback?.track?.name ?? "—";
   const artist = playback?.track?.artists.join(", ") ?? "";
+  const albumArt = playback?.track?.albumArt ?? null;
   const trackId = playback?.track?.id ?? playback?.trackId ?? null;
   const spotifyUrl = trackId ? `https://open.spotify.com/track/${trackId}` : null;
 
@@ -42,6 +45,8 @@ export function HUD(): React.ReactElement {
   const [isTruncated, setIsTruncated] = useState(false);
   const [titleHovered, setTitleHovered] = useState(false);
   const [titleFocused, setTitleFocused] = useState(false);
+  const [comboMilestoneFx, setComboMilestoneFx] = useState(false);
+  const [comboBreakFx, setComboBreakFx] = useState(false);
 
   const measureTruncation = (): void => {
     const el = titleMeasureRef.current;
@@ -68,7 +73,31 @@ export function HUD(): React.ReactElement {
     []
   );
 
+  useEffect(() => {
+    if (comboMilestoneSeq <= 0) return;
+    setComboMilestoneFx(false);
+    const id = window.setTimeout(() => setComboMilestoneFx(true), 0);
+    const end = window.setTimeout(() => setComboMilestoneFx(false), 340);
+    return () => {
+      window.clearTimeout(id);
+      window.clearTimeout(end);
+    };
+  }, [comboMilestoneSeq]);
+
+  useEffect(() => {
+    if (comboBreakSeq <= 0) return;
+    setComboBreakFx(false);
+    const id = window.setTimeout(() => setComboBreakFx(true), 0);
+    const end = window.setTimeout(() => setComboBreakFx(false), 260);
+    return () => {
+      window.clearTimeout(id);
+      window.clearTimeout(end);
+    };
+  }, [comboBreakSeq]);
+
   const showExpandedTitle = isTruncated && (titleHovered || titleFocused);
+  const comboColor =
+    combo >= 100 ? "#ff4a4a" : combo >= 50 ? "#ff8a3d" : combo >= 25 ? "#ffd65f" : "var(--accent)";
 
   const onCopyLink = (): void => {
     if (!spotifyUrl) return;
@@ -88,24 +117,68 @@ export function HUD(): React.ReactElement {
       style={{
         display: "flex",
         flexDirection: "column",
-        padding: "8px 10px 6px",
+        padding: "1.5px 10px 1.5px 1.5px",
         background: "var(--surface)",
         borderBottom: "1px solid #222",
-        gap: "4px",
+        gap: "2px",
       }}
     >
+      <style>{`
+        @keyframes comboMilestoneBounce {
+          0% { transform: scale(1) rotate(0deg); }
+          30% { transform: scale(1.2) rotate(-2deg); }
+          60% { transform: scale(0.94) rotate(1.5deg); }
+          100% { transform: scale(1) rotate(0deg); }
+        }
+        @keyframes comboBreakShake {
+          0% { transform: translateX(0px); opacity: 1; }
+          20% { transform: translateX(-3px); opacity: 1; }
+          40% { transform: translateX(3px); opacity: 1; }
+          60% { transform: translateX(-2px); opacity: 0.95; }
+          100% { transform: translateX(0px); opacity: 1; }
+        }
+      `}</style>
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "flex-start",
-          gap: "6px",
+          alignItems: "stretch",
+          gap: "8px",
         }}
       >
+        {albumArt ? (
+          <img
+            src={albumArt}
+            alt={`${trackName} album cover`}
+            style={{
+              width: 30,
+              height: "100%",
+              minHeight: 30,
+              borderRadius: 6,
+              objectFit: "cover",
+              border: "1px solid rgba(255,255,255,0.18)",
+              flexShrink: 0,
+            }}
+          />
+        ) : (
+          <div
+            aria-hidden
+            style={{
+              width: 30,
+              height: "100%",
+              minHeight: 30,
+              borderRadius: 6,
+              background: "linear-gradient(180deg, #2a2a34 0%, #1b1b24 100%)",
+              border: "1px solid rgba(255,255,255,0.15)",
+              flexShrink: 0,
+            }}
+          />
+        )}
         <div
           style={{
             flex: 1,
             minWidth: 0,
+            marginLeft: "-6px",
             position: "relative",
             overflow: "visible",
           }}
@@ -228,7 +301,7 @@ export function HUD(): React.ReactElement {
           <div
             style={{
               fontSize: "9px",
-              color: "var(--accent)",
+              color: comboBreakFx && combo <= 1 ? "#ff5252" : comboColor,
               fontWeight: 600,
               fontVariantNumeric: "tabular-nums",
               lineHeight: 1.25,
@@ -236,6 +309,10 @@ export function HUD(): React.ReactElement {
               minWidth: "11ch",
               whiteSpace: "nowrap",
               visibility: combo > 1 ? "visible" : "hidden",
+              animation:
+                combo > 1
+                  ? `${comboMilestoneFx ? "comboMilestoneBounce 300ms ease-out" : "none"}`
+                  : `${comboBreakFx ? "comboBreakShake 220ms ease-out" : "none"}`,
             }}
             aria-live="polite"
           >

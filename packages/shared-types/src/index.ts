@@ -28,6 +28,8 @@ export const NoteSchema = z.object({
   lane: z.number().int().min(0).max(4),
   /** Duration in ms; 0 for tap notes, >0 for holds. */
   durationMs: z.number().nonnegative().default(0),
+  /** Optional pitch hint used for manual-hit audio synthesis. */
+  pitchHz: z.number().positive().optional(),
 });
 
 export type Note = z.infer<typeof NoteSchema>;
@@ -197,6 +199,8 @@ export const AppSettingsSchema = z.object({
    * Set via timing calibrator or manually.
    */
   playbackTimingOffsetMs: z.number().int().min(-500).max(500).default(0),
+  /** Visual-only lane highway shift in ms (positive = notes appear later). */
+  visualNoteOffsetMs: z.number().int().min(-250).max(250).default(0),
   difficulty: DifficultySchema.default("medium"),
   /** When true, new charts start in autoplay; press play key to switch to manual. */
   autoplay: z.boolean().default(false),

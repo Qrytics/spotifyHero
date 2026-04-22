@@ -5,6 +5,7 @@ import {
 } from "@spotifyhero/leaderboard-client";
 import type { Difficulty, GameSession, LeaderboardEntry } from "@spotifyhero/shared-types";
 import { useGameStore } from "../store/gameStore.js";
+import { GAME_LOGO_SRC, GAME_TITLE } from "../lib/branding.js";
 
 type Props = {
   open: boolean;
@@ -157,7 +158,21 @@ export function LeaderboardPanel({
     >
       <div className="leaderboard-modal thin-scrollbar">
         <div className="leaderboard-header">
-          <h3>Leaderboard</h3>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+            <img
+              src={GAME_LOGO_SRC}
+              alt={`${GAME_TITLE} logo`}
+              style={{
+                width: 16,
+                height: 16,
+                borderRadius: "50%",
+                objectFit: "cover",
+                border: "1px solid rgba(255,255,255,0.18)",
+                flexShrink: 0,
+              }}
+            />
+            <h3>Leaderboard</h3>
+          </div>
           <button type="button" onClick={onClose}>
             ×
           </button>

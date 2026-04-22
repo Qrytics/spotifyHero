@@ -78,6 +78,33 @@ function bestLaneHitIndex(
   return bestIdx;
 }
 
+/** Autoplay: hit nearest-to-center note per lane, preferring post-center crossing over early entry. */
+function collectAutoplayCenterHits(
+  chart: Chart,
+  positionMs: number,
+  engine: ScoringEngine,
+  perfectWindowMs: number
+): number[] {
+  const bestPerLane: Array<{ idx: number; absDelta: number } | null> = [null, null, null, null];
+  for (let i = 0; i < chart.notes.length; i++) {
+    if (engine.isResolved(i)) continue;
+    const note = chart.notes[i];
+    if (!note) continue;
+    const lane = note.lane;
+    if (lane < 0 || lane > 3) continue;
+    const head = noteHeadTimeMs(note, CHART_LEAD_IN_MS);
+    const delta = positionMs - head;
+    if (Math.abs(delta) > perfectWindowMs) continue;
+    if (delta < -3) continue;
+    const absDelta = Math.abs(delta);
+    const prev = bestPerLane[lane];
+    if (!prev || absDelta < prev.absDelta) {
+      bestPerLane[lane] = { idx: i, absDelta };
+    }
+  }
+  return bestPerLane.filter((v): v is { idx: number; absDelta: number } => v !== null).map((v) => v.idx);
+}
+
 /**
  * Re-anchor transport to current Spotify playback when a chart mounts so we never
  * judge the new chart using the previous song's timeline (instant mass-miss bug).
@@ -320,6 +347,9 @@ export function useGameLoop(): void {
       if (!engine) return;
 
       loopFramesForChartRef.current += 1;
+      // #region agent log
+      if (loopFramesForChartRef.current % 120 === 0) fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H0',location:'apps/overlay-ui/src/hooks/useGameLoop.ts:loopHeartbeat',message:'Game loop heartbeat',data:{phase:state.phase,trackLifecycle:state.trackLifecycle,boundedTrack:liveChart.trackId,frame:loopFramesForChartRef.current},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
 
       const { startMs, endMs } = chartBoundsRef.current;
       /** Last chart event (tail) — session must not complete until playhead passes this. */
@@ -400,16 +430,15 @@ export function useGameLoop(): void {
           usedAutoplayRef.current = true;
           useGameStore.setState({ usedAutoplayThisRound: true });
         }
-        const windowManager = windowManagerRef.current;
-        if (windowManager) {
-          const hits = windowManager.getAutoplayHits(boundedPos);
-          for (const { index } of hits) {
-            if (!engine.isResolved(index)) {
-              const event = engine.onNoteHit(index, boundedPos);
-              if (event) {
-                scoreFrame.push(event);
-              }
-            }
+        const perfectWindowMs =
+          liveChart.difficulty === "expert"
+            ? EXPERT_HIT_WINDOWS.perfect
+            : DEFAULT_HIT_WINDOWS.perfect;
+        const hits = collectAutoplayCenterHits(liveChart, boundedPos, engine, perfectWindowMs);
+        for (const index of hits) {
+          const event = engine.onNoteHit(index, boundedPos);
+          if (event) {
+            scoreFrame.push(event);
           }
         }
       }
@@ -424,11 +453,17 @@ export function useGameLoop(): void {
           consecutiveAfkMissRef.current = 0;
         }
       }
+      // #region agent log
+      if (holdEvents.length > 0) fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H4',location:'apps/overlay-ui/src/hooks/useGameLoop.ts:holdEvents',message:'Hold events emitted in frame',data:{boundedPos,events:holdEvents.map((e)=>({noteIndex:e.noteIndex,judgement:e.judgement,countsTowardAccuracy:e.countsTowardAccuracy,showHitFx:e.showHitFx}))},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
 
       const missed = engine.evaluateMisses(boundedPos);
       for (const event of missed) {
         scoreFrame.push(event);
       }
+      // #region agent log
+      if (missed.length > 0) fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H2',location:'apps/overlay-ui/src/hooks/useGameLoop.ts:missed',message:'Miss events emitted in frame',data:{boundedPos,misses:missed.map((e)=>({noteIndex:e.noteIndex,judgement:e.judgement,countsTowardAccuracy:e.countsTowardAccuracy}))},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
 
       if (scoreFrame.length > 0) {
         useGameStore.getState().onScoreEvents(scoreFrame, noteCount);

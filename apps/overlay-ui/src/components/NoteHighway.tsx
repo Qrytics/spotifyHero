@@ -13,7 +13,7 @@ import { shouldHideNotesForQuietPlayback } from "../lib/playbackVolumeGate.js";
  * Canvas 2D highway — hot path avoids allocations, map/filter/sort per frame.
  * Playhead uses `playbackClock` — smooth extrapolation; Spotify polls only re-anchor on meaningful drift.
  */
-const LANE_HEX = ["#e040fb", "#1db954", "#ff9800", "#2196f3"];
+const LANE_HEX = ["#BF5FFF", "#00E5FF", "#FF6B35", "#39FF14"];
 const LANE_COUNT = 4;
 const NOTE_RADIUS = 15;
 /** Bottom of static target rings (largest arc in paintStatic). */
@@ -56,6 +56,11 @@ const TIME_EPSILON_MS = 0.01;
 type SortedNote = { note: Note; chartIndex: number };
 
 type HitFx = { lane: number; judgement: Judgement; t0: number };
+type LaneFlashFx = { lane: number; t0: number };
+type JudgementTextFx = { lane: number; text: string; color: string; t0: number };
+type ParticleFx = { lane: number; x: number; y: number; vx: number; vy: number; t0: number; lifeMs: number; color: string };
+type ReceptorPopFx = { t0: number };
+type EdgePulseFx = { color: string; t0: number };
 
 /** Canvas note visibility — updated from score events (same closure as highway loop). */
 type NoteVisibility = {
@@ -72,6 +77,7 @@ type SustainVisual = {
   startTime: number;
   endTime: number;
   headHidden: boolean;
+  completed: boolean;
 };
 
 type ReceptorPressState = {
@@ -94,6 +100,23 @@ function judgementFxColor(j: Judgement): string {
       return "#ff5252";
     default:
       return "#fff";
+  }
+}
+
+function judgementLabel(j: Judgement): string {
+  switch (j) {
+    case "perfect":
+      return "PERFECT";
+    case "great":
+      return "GREAT";
+    case "good":
+      return "GOOD";
+    case "bad":
+      return "BAD";
+    case "miss":
+      return "MISS";
+    default:
+      return "HIT";
   }
 }
 
@@ -178,7 +201,8 @@ function paintSustainBodyPath(
 ): void {
   const top = Math.min(cyHead, cyTail);
   const bot = Math.max(cyHead, cyTail);
-  const h = Math.max(bot - top, 4);
+  const h = bot - top;
+  if (h <= 0.5) return;
   const x = cx - bodyW / 2;
   ctx.beginPath();
   ctx.roundRect(x, top, bodyW, h, radii);
@@ -250,6 +274,12 @@ const NoteHighwayInner = (): React.ReactElement => {
     if (!ctx) return;
 
     const hitEffects: HitFx[] = [];
+    const laneFlashes: LaneFlashFx[] = [];
+    const judgementTexts: JudgementTextFx[] = [];
+    const particles: ParticleFx[] = [];
+    const receptorPop: ReceptorPopFx[] = Array.from({ length: LANE_COUNT }, () => ({ t0: -Infinity }));
+    let perfectStreak = 0;
+    let edgePulse: EdgePulseFx | null = null;
     const receptorPress: ReceptorPressState[] = Array.from({ length: LANE_COUNT }, () => ({
       isDown: false,
       downAt: -Infinity,
@@ -278,17 +308,60 @@ const NoteHighwayInner = (): React.ReactElement => {
       const allowHitBurst = isHoldSustainSuccessTick
         ? ev.showHitFx === true
         : ev.showHitFx !== false;
-
-      if (allowHitBurst) {
-        hitEffects.push({ lane, judgement: ev.judgement, t0: performance.now() });
-        if (hitEffects.length > 14) hitEffects.splice(0, hitEffects.length - 14);
-      }
-      const idx = ev.noteIndex;
       const good =
         ev.judgement === "perfect" ||
         ev.judgement === "great" ||
         ev.judgement === "good";
       const failed = ev.judgement === "miss" || ev.judgement === "bad";
+
+      const spawnHitEffect = (laneFx: number, judgement: Judgement): void => {
+        const now = performance.now();
+        hitEffects.push({ lane: laneFx, judgement, t0: now });
+        if (judgement !== "miss" && judgement !== "bad") {
+          laneFlashes.push({ lane: laneFx, t0: now });
+        }
+        receptorPop[laneFx] = { t0: now };
+        judgementTexts.push({
+          lane: laneFx,
+          text: judgementLabel(judgement),
+          color: judgement === "perfect" ? "#FFD54F" : judgement === "good" || judgement === "great" ? "#FFFFFF" : "#FF5252",
+          t0: now,
+        });
+        if (judgementTexts.length > 16) judgementTexts.splice(0, judgementTexts.length - 16);
+        const laneWidth = (dimsRef.current.cssW > 0 ? dimsRef.current.cssW : 280) / LANE_COUNT;
+        const cx = laneFx * laneWidth + laneWidth / 2;
+        const cy = (dimsRef.current.cssH > 0 ? dimsRef.current.cssH : 220) - HIT_TARGET_OUTER_R - HIT_LINE_BOTTOM_PAD;
+        for (let i = 0; i < 10; i++) {
+          const angle = (Math.PI * 2 * i) / 10 + Math.random() * 0.25;
+          const speed = 0.9 + Math.random() * 1.7;
+          particles.push({
+            lane: laneFx,
+            x: cx,
+            y: cy,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 1.4,
+            t0: now,
+            lifeMs: 220,
+            color: LANE_HEX[laneFx] ?? "#fff",
+          });
+        }
+        if (particles.length > 180) particles.splice(0, particles.length - 180);
+      };
+
+      if (allowHitBurst) {
+        spawnHitEffect(lane, ev.judgement);
+        if (hitEffects.length > 14) hitEffects.splice(0, hitEffects.length - 14);
+      }
+      const idx = ev.noteIndex;
+
+      if (ev.judgement === "perfect") {
+        perfectStreak += 1;
+        if (perfectStreak % 10 === 0) {
+          edgePulse = { color: LANE_HEX[lane] ?? "#fff", t0: performance.now() };
+        }
+      } else if (failed) {
+        perfectStreak = 0;
+      }
 
       if (failed) {
         visibility.goneTap.delete(idx);
@@ -311,9 +384,21 @@ const NoteHighwayInner = (): React.ReactElement => {
         startTime: existing?.startTime ?? startTime,
         endTime,
         headHidden: existing?.headHidden ?? false,
+        completed: existing?.completed ?? false,
       });
       // Sustain ticks (interior + tail): each tick has a unique `sig` via `deltaMs`.
       if (isHoldSustainSuccessTick) {
+        // Tail checkpoint marks completion; render removes strip exactly at note end.
+        if (ev.showHitFx === true) {
+          const current = visibility.activeSustains.get(idx);
+          if (current) {
+            visibility.activeSustains.set(idx, { ...current, completed: true });
+          }
+          // #region agent log
+          fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H1',location:'apps/overlay-ui/src/components/NoteHighway.tsx:applyOneScoreEvent.tail',message:'Tail tick marked sustain completed',data:{noteIndex:idx,endTime:current?.endTime ?? endTime,judgement:ev.judgement,showHitFx:ev.showHitFx},timestamp:Date.now()})}).catch(()=>{});
+          // #endregion
+          visibility.goneTap.add(idx);
+        }
         visibility.missSlide.delete(idx);
         return;
       }
@@ -323,6 +408,7 @@ const NoteHighwayInner = (): React.ReactElement => {
         startTime,
         endTime,
         headHidden: true,
+        completed: false,
       });
       visibility.missSlide.delete(idx);
     };
@@ -429,7 +515,7 @@ const NoteHighwayInner = (): React.ReactElement => {
       if (!dim || dim.lw < 2 || dim.lh < 2) return;
 
       const { dpr, lw, lh } = dim;
-      const pos = calibratedPlaybackMs();
+      const pos = calibratedPlaybackMs() + (state.settings.visualNoteOffsetMs ?? 0);
 
       const off = rebuildStatic(lw, lh, canvas.width, canvas.height, dpr, c.trackId);
 
@@ -449,6 +535,7 @@ const NoteHighwayInner = (): React.ReactElement => {
         ? []
         : sorted;
       const nowFx = performance.now();
+      paintSpeedLines(ctx, lw, lh, nowFx);
       paintNotes(
         ctx,
         notesToPaint,
@@ -458,10 +545,16 @@ const NoteHighwayInner = (): React.ReactElement => {
         lh,
         visibility,
         lookAheadEffective,
-        occludedRef.current
+        occludedRef.current,
+        nowFx
       );
+      paintLaneFlashes(ctx, lw, lh, laneFlashes, nowFx);
+      paintDynamicReceptors(ctx, lw, lh, receptorPop, nowFx);
       paintReceptorPressGlow(ctx, lw, lh, receptorPress, nowFx);
       paintHitEffects(ctx, lw, lh, hitEffects, nowFx);
+      paintParticles(ctx, particles, nowFx);
+      paintJudgementTexts(ctx, lw, lh, judgementTexts, nowFx);
+      paintEdgePulse(ctx, lw, lh, edgePulse, nowFx);
     };
 
     dimsRef.current = { cssW: -1, cssH: -1 };
@@ -482,6 +575,9 @@ const NoteHighwayInner = (): React.ReactElement => {
       staticRef.current = null;
       dimsRef.current = { cssW: -1, cssH: -1 };
       hitEffects.length = 0;
+      laneFlashes.length = 0;
+      judgementTexts.length = 0;
+      particles.length = 0;
       visibility.goneTap.clear();
       visibility.activeSustains.clear();
       visibility.missSlide.clear();
@@ -579,7 +675,8 @@ function paintNotes(
   height: number,
   vis: NoteVisibility,
   lookAheadMs: number,
-  occluded: ReadonlySet<number>
+  occluded: ReadonlySet<number>,
+  nowMs: number
 ): void {
   const n = sortedNotes.length;
   if (n === 0) return;
@@ -645,41 +742,68 @@ function paintNotes(
     const glowR = NOTE_RADIUS + 5 + pulse * 3;
     const sustain = vis.activeSustains.get(chartIndex);
     const holdStripOnly = note.durationMs > 0 && sustain?.headHidden === true;
+    if (sustain?.completed && positionMs >= endMs - TIME_EPSILON_MS) {
+      // #region agent log
+      fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H1',location:'apps/overlay-ui/src/components/NoteHighway.tsx:paintNotes.completedDelete',message:'Completed sustain removed from active visuals',data:{chartIndex,positionMs,endMs,deltaToEnd:positionMs-endMs,headHidden:sustain.headHidden},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+      vis.activeSustains.delete(chartIndex);
+      continue;
+    }
+
+    const approach = Math.min(1, Math.max(0.6, 1 - (timeUntil - 80) / Math.max(lookAheadMs, 1)));
+    const anticipationT =
+      timeUntil > 100 || timeUntil < -60 ? 0 : Math.max(0, 1 - Math.abs(timeUntil) / 100);
+    const noteScale = 1 + anticipationT * 0.08;
+    const noteR = NOTE_RADIUS * noteScale;
 
     if (note.durationMs > 0) {
       const cyTail = yFromTime(hitLineY, pxPerMs, endMs, positionMs);
-      const cyHeadBar = cy + NOTE_RADIUS;
+      const cyHeadBar = holdStripOnly
+        ? hitLineY + noteR
+        : yFromTime(hitLineY, pxPerMs, headT, positionMs) + noteR;
       const h = Math.abs(cyTail - cyHeadBar);
-      const bodyW = NOTE_RADIUS * 2.35;
+      if (h <= 0.75) {
+        if (sustain?.completed || positionMs >= endMs - TIME_EPSILON_MS) {
+          vis.goneTap.add(chartIndex);
+          vis.activeSustains.delete(chartIndex);
+        }
+        continue;
+      }
+      const bodyW = noteR * 2.35;
       const rCap = Math.min(bodyW * 0.5, h * 0.5);
       const cornerRadii = [rCap, rCap, rCap, rCap] as const;
+      const shimmer = (Math.sin(nowMs * 0.012 + chartIndex) + 1) * 0.5;
       ctx.globalAlpha = holdStripOnly ? 0.88 : 0.84;
       ctx.fillStyle = hex;
+      ctx.shadowColor = hexToRgba(hex, 0.55);
+      ctx.shadowBlur = 8 + shimmer * 6;
       paintSustainBodyPath(ctx, cx, cyHeadBar, cyTail, bodyW, cornerRadii);
       ctx.fill();
+      ctx.shadowBlur = 0;
       ctx.globalAlpha = holdStripOnly ? 0.95 : 0.9;
       ctx.strokeStyle = "rgba(255,255,255,0.35)";
       ctx.lineWidth = 1.5;
       paintSustainBodyPath(ctx, cx, cyHeadBar, cyTail, bodyW, cornerRadii);
       ctx.stroke();
+
     }
 
     if (!holdStripOnly) {
-      ctx.globalAlpha = 0.14 + pulse * 0.1;
+      ctx.globalAlpha = (0.14 + pulse * 0.1) * approach;
       ctx.fillStyle = hex;
       ctx.beginPath();
-      ctx.arc(cx, cy, glowR, 0, Math.PI * 2);
+      ctx.arc(cx, cy, glowR * noteScale, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.globalAlpha = 1;
+      ctx.globalAlpha = approach;
       ctx.fillStyle = hex;
       ctx.beginPath();
-      ctx.arc(cx, cy, NOTE_RADIUS, 0, Math.PI * 2);
+      ctx.arc(cx, cy, noteR, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.strokeStyle = "rgba(255,255,255,0.42)";
       ctx.beginPath();
-      ctx.arc(cx, cy, NOTE_RADIUS, 0, Math.PI * 2);
+      ctx.arc(cx, cy, noteR, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
@@ -689,6 +813,7 @@ function paintNotes(
   for (const [idx, sustain] of vis.activeSustains) {
     const note = chartNotes[idx];
     if (!note || note.durationMs <= 0) {
+      vis.goneTap.add(idx);
       vis.activeSustains.delete(idx);
       continue;
     }
@@ -701,6 +826,7 @@ function paintNotes(
         height
       )
     ) {
+      vis.goneTap.add(idx);
       vis.activeSustains.delete(idx);
     }
   }
@@ -900,6 +1026,133 @@ function paintHitEffects(
 
     ctx.globalAlpha = 1;
   }
+}
+
+function paintSpeedLines(ctx: CanvasRenderingContext2D, width: number, height: number, now: number): void {
+  ctx.save();
+  ctx.globalAlpha = 0.12;
+  ctx.strokeStyle = "rgba(255,255,255,0.22)";
+  ctx.lineWidth = 1;
+  const offset = (now * 0.18) % 28;
+  for (let x = 8; x < width; x += 26) {
+    for (let y = -24 + offset; y < height; y += 28) {
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x, y + 12);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function paintLaneFlashes(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  flashes: LaneFlashFx[],
+  now: number
+): void {
+  const laneWidth = width / LANE_COUNT;
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    const age = now - flashes[i]!.t0;
+    if (age > 90) flashes.splice(i, 1);
+  }
+  for (const fx of flashes) {
+    const t = Math.min(1, (now - fx.t0) / 90);
+    const alpha = (1 - t) * 0.3;
+    ctx.fillStyle = hexToRgba(LANE_HEX[fx.lane] ?? "#fff", alpha);
+    ctx.fillRect(fx.lane * laneWidth, 0, laneWidth, height);
+  }
+}
+
+function paintDynamicReceptors(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  pop: ReceptorPopFx[],
+  now: number
+): void {
+  const laneWidth = width / LANE_COUNT;
+  const hitLineY = hitLineYFromHeight(height);
+  for (let lane = 0; lane < LANE_COUNT; lane++) {
+    const age = now - (pop[lane]?.t0 ?? -Infinity);
+    const t = age < 120 ? age / 120 : 1;
+    const bump = age < 120 ? 1 + Math.sin((1 - t) * Math.PI) * 0.3 : 1;
+    const cx = lane * laneWidth + laneWidth / 2;
+    const col = LANE_HEX[lane] ?? "#fff";
+    ctx.strokeStyle = hexToRgba(col, 0.7);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, hitLineY, (NOTE_RADIUS + 2) * bump, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = hexToRgba(col, 0.25);
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(cx, hitLineY, (NOTE_RADIUS + 8) * (1 + Math.sin(now * 0.003 + lane) * 0.03), 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+function paintJudgementTexts(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  texts: JudgementTextFx[],
+  now: number
+): void {
+  const laneWidth = width / LANE_COUNT;
+  const baseY = hitLineYFromHeight(height) - 22;
+  for (let i = texts.length - 1; i >= 0; i--) {
+    const age = now - texts[i]!.t0;
+    if (age > 520) texts.splice(i, 1);
+  }
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = "700 12px system-ui";
+  for (const t of texts) {
+    const p = Math.min(1, (now - t.t0) / 520);
+    const y = baseY - p * 16;
+    ctx.globalAlpha = 1 - p;
+    ctx.fillStyle = t.color;
+    ctx.fillText(t.text, t.lane * laneWidth + laneWidth / 2, y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function paintParticles(ctx: CanvasRenderingContext2D, particles: ParticleFx[], now: number): void {
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i]!;
+    const age = now - p.t0;
+    if (age > p.lifeMs) particles.splice(i, 1);
+  }
+  for (const p of particles) {
+    const t = (now - p.t0) / p.lifeMs;
+    const x = p.x + p.vx * (now - p.t0) * 0.12;
+    const y = p.y + p.vy * (now - p.t0) * 0.12 + t * t * 14;
+    ctx.globalAlpha = 1 - t;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(x, y, 2.4, 2.4);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function paintEdgePulse(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  pulse: EdgePulseFx | null,
+  now: number
+): void {
+  if (!pulse) return;
+  const age = now - pulse.t0;
+  if (age > 260) return;
+  const t = age / 260;
+  const a = (1 - t) * 0.36;
+  const g = ctx.createRadialGradient(width / 2, height / 2, Math.min(width, height) * 0.36, width / 2, height / 2, Math.max(width, height));
+  g.addColorStop(0, "rgba(0,0,0,0)");
+  g.addColorStop(1, hexToRgba(pulse.color, a));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, width, height);
 }
 
 /** #rrggbb + alpha → rgba() for gradients */

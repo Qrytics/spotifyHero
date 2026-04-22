@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { countChartTapsAndHolds } from "@spotifyhero/gameplay-core";
 import { useGameStore } from "../store/gameStore.js";
 import { LeaderboardPanel } from "./LeaderboardPanel.js";
+import { GAME_LOGO_SRC, GAME_TITLE } from "../lib/branding.js";
 
 export function ResultsScreen(): React.ReactElement {
   const session = useGameStore((s) => s.session);
@@ -30,6 +31,18 @@ export function ResultsScreen(): React.ReactElement {
         textAlign: "center",
       }}
     >
+      <img
+        src={GAME_LOGO_SRC}
+        alt={`${GAME_TITLE} logo`}
+        style={{
+          width: 48,
+          height: 48,
+          borderRadius: "50%",
+          objectFit: "cover",
+          border: "1px solid rgba(255,255,255,0.15)",
+          marginBottom: "2px",
+        }}
+      />
       <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{trackName}</div>
       <div style={{ fontSize: "22px", fontWeight: 800, color: "var(--text)" }}>
         {session.score.toLocaleString()}

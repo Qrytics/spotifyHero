@@ -44,7 +44,12 @@ export function App(): React.ReactElement {
       if (!tauriSettings) return;
       useGameStore.getState().updateSettings({
         noteScrollSpeed: tauriSettings.noteScrollSpeed,
+        window: {
+          ...useGameStore.getState().settings.window,
+          alwaysOnTop: tauriSettings.alwaysOnTop,
+        },
         playbackTimingOffsetMs: tauriSettings.playbackTimingOffsetMs,
+        visualNoteOffsetMs: tauriSettings.visualNoteOffsetMs,
         spotifyClientId: tauriSettings.spotifyClientId ?? undefined,
       });
     })();

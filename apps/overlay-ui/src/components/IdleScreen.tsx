@@ -3,6 +3,7 @@ import { useGameStore } from "../store/gameStore.js";
 import { invoke } from "@tauri-apps/api/core";
 import type { SpotifyPollDiagnostics } from "../lib/spotifyDiagnostics.js";
 import { formatKeybindLabel } from "../lib/keybindDisplay.js";
+import { GAME_LOGO_SRC, GAME_TITLE } from "../lib/branding.js";
 
 type ConnectionStatus = { connected: boolean };
 
@@ -128,9 +129,19 @@ export function IdleScreen({ onOpenSettings }: IdleProps): React.ReactElement {
           paddingBottom: "4px",
         }}
       >
-        <div style={{ fontSize: "24px", lineHeight: 1 }}>🎵</div>
+        <img
+          src={GAME_LOGO_SRC}
+          alt={`${GAME_TITLE} logo`}
+          style={{
+            width: 58,
+            height: 58,
+            borderRadius: "50%",
+            objectFit: "cover",
+            border: "1px solid rgba(255,255,255,0.14)",
+          }}
+        />
         <div style={{ fontSize: "12px", fontWeight: 700, color: "var(--accent)" }}>
-          spotifyHero
+          {GAME_TITLE}
         </div>
         <div
           style={{

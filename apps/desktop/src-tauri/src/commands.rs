@@ -98,12 +98,20 @@ pub struct SpotifyConnectionStatus {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettingsPayload {
+    #[serde(default = "default_always_on_top")]
+    pub always_on_top: bool,
     pub note_scroll_speed: f64,
     #[serde(default)]
     pub playback_timing_offset_ms: i32,
+    #[serde(default)]
+    pub visual_note_offset_ms: i32,
     /// Override Spotify app Client ID (32 hex chars). Empty = use built-in / env default.
     #[serde(default)]
     pub spotify_client_id: Option<String>,
+}
+
+fn default_always_on_top() -> bool {
+    true
 }
 
 #[command]
@@ -212,6 +220,10 @@ pub async fn load_app_settings(app: tauri::AppHandle) -> Result<AppSettingsPaylo
         .get("note_scroll_speed")
         .and_then(|v| v.as_f64())
         .unwrap_or(defaults.note_scroll_speed);
+    let always_on_top = store
+        .get("always_on_top")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(defaults.always_on_top);
     let playback_timing_offset_ms = store
         .get("playback_timing_offset_ms")
         .and_then(|v| v.as_i64().map(|n| n.clamp(-500, 500) as i32))
@@ -221,8 +233,13 @@ pub async fn load_app_settings(app: tauri::AppHandle) -> Result<AppSettingsPaylo
         .and_then(|v| v.as_str().map(|s| s.trim().to_string()))
         .filter(|s| !s.is_empty());
     Ok(AppSettingsPayload {
+        always_on_top,
         note_scroll_speed,
         playback_timing_offset_ms,
+        visual_note_offset_ms: store
+            .get("visual_note_offset_ms")
+            .and_then(|v| v.as_i64().map(|n| n.clamp(-250, 250) as i32))
+            .unwrap_or(0),
         spotify_client_id,
     })
 }
@@ -251,10 +268,15 @@ pub async fn save_app_settings(
         let _ = clear_tokens(store.as_ref());
     }
 
+    store.set("always_on_top", serde_json::json!(payload.always_on_top));
     store.set("note_scroll_speed", serde_json::json!(payload.note_scroll_speed));
     store.set(
         "playback_timing_offset_ms",
         serde_json::json!(payload.playback_timing_offset_ms),
+    );
+    store.set(
+        "visual_note_offset_ms",
+        serde_json::json!(payload.visual_note_offset_ms),
     );
     match &next_cid {
         Some(s) => store.set("spotify_client_id", serde_json::json!(s)),

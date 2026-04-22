@@ -13,8 +13,12 @@ function demoBeatEvents(track: SpotifyTrack): { events: BeatEvent[]; bpm: number
   /** Spotify Audio Features tempo (filled by Tauri); fallback only if unavailable. */
   const bpm = track.bpm ?? 120;
   const beatMs = 60_000 / bpm;
-  /** Align grid to song start (t=0). Random phase made charts feel off-beat vs the music. */
-  const phase = 0;
+  /**
+   * Demo generator fallback: many tracks have a short intro before the first strong beat.
+   * Biasing phase forward avoids the common "chart trails the heard beat by ~2s" feel
+   * until real beat/downbeat analysis replaces this synthetic grid path.
+   */
+  const phase = 2000;
   const eighth = beatMs / 2;
   const sixteenth = beatMs / 4;
 

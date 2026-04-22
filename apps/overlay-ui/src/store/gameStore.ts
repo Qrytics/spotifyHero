@@ -15,8 +15,8 @@ export type SpotifyUserProfile = {
   email: string | null;
 };
 import type { PlayMode } from "@spotifyhero/gameplay-core";
-import { saveTauriAppSettings } from "../lib/tauriSettings.js";
-import { playHitFinishSfx } from "../lib/hitSound.js";
+import { saveTauriAppSettings, setTauriAlwaysOnTop } from "../lib/tauriSettings.js";
+import { playScoreEventSfx } from "../lib/hitSound.js";
 
 const SETTINGS_STORAGE_KEY = "spotifyHero_settings_v1";
 
@@ -92,6 +92,9 @@ interface GameState {
   score: number;
   combo: number;
   maxCombo: number;
+  lastComboMilestone: number;
+  comboMilestoneSeq: number;
+  comboBreakSeq: number;
   accuracy: number;
   lastScoreEvent: ScoreEvent | null;
   /** Last `onScoreEvents` payload — highway applies visibility for every event in one store tick. */
@@ -138,6 +141,9 @@ export const useGameStore = create<GameState>((set, get) => ({
   score: 0,
   combo: 0,
   maxCombo: 0,
+  lastComboMilestone: 0,
+  comboMilestoneSeq: 0,
+  comboBreakSeq: 0,
   accuracy: 1,
   lastScoreEvent: null,
   lastScoreEventBatch: null,
@@ -190,16 +196,6 @@ export const useGameStore = create<GameState>((set, get) => ({
       if (get().phase === "loading" && !trackChanged) {
         return;
       }
-      const st = get();
-      let inherit: "autoplay" | "manual" | null = null;
-      if (st.phase === "autoplay" || st.phase === "manual") {
-        inherit = st.phase;
-      } else if (st.phase === "paused") {
-        inherit = st.lastPlayPhase;
-      } else if (st.phase === "results") {
-        inherit = st.lastPlayPhase;
-      }
-
       set({
         phase: "loading",
         trackLifecycle: "loading",
@@ -208,20 +204,22 @@ export const useGameStore = create<GameState>((set, get) => ({
         score: 0,
         combo: 0,
         maxCombo: 0,
+        lastComboMilestone: 0,
+        comboMilestoneSeq: 0,
+        comboBreakSeq: 0,
         accuracy: 1,
         lastScoreEvent: null,
         lastScoreEventBatch: null,
         scoreEventSeq: 0,
         session: null,
         usedAutoplayThisRound: false,
-        sessionPlayMode: inherit,
+        sessionPlayMode: "autoplay",
       });
       return;
     }
 
     const phaseNow = get().phase;
-    const preferAutoplay = get().settings.autoplay;
-    const playPhase: GamePhase = preferAutoplay ? "autoplay" : "manual";
+    const playPhase: GamePhase = "autoplay";
 
     if (phaseNow === "paused") {
       set({
@@ -246,9 +244,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   setChart: (chart) =>
     set((state) => {
-      const phase: GamePhase =
-        state.sessionPlayMode ??
-        (state.settings.autoplay ? "autoplay" : "manual");
+      const phase: GamePhase = "autoplay";
       const nextLast =
         phase === "autoplay" || phase === "manual" ? phase : state.lastPlayPhase;
       return {
@@ -274,27 +270,48 @@ export const useGameStore = create<GameState>((set, get) => ({
       return;
     }
     if (st.phase !== "autoplay") {
+      let prevComboForSfx = st.combo;
       for (const e of events) {
-        playHitFinishSfx(e);
+        const note = st.chart?.notes[e.noteIndex];
+        const lane = note?.lane ?? 0;
+        playScoreEventSfx(e, lane, prevComboForSfx, note?.pitchHz);
+        prevComboForSfx = Number.isFinite(e.combo) ? e.combo : prevComboForSfx;
       }
     }
     set((state) => {
       let score = state.score;
       let combo = state.combo;
       let maxCombo = state.maxCombo;
+      let lastComboMilestone = state.lastComboMilestone;
+      let comboMilestoneSeq = state.comboMilestoneSeq;
+      let comboBreakSeq = state.comboBreakSeq;
+      let prevCombo = state.combo;
       for (const event of events) {
         const pts = Number(event.pointsAwarded);
         const awarded = Number.isFinite(pts) ? pts : 0;
         score = event.judgement !== "miss" ? score + awarded : score;
         const c = Number.isFinite(event.combo) ? event.combo : 0;
+        const brokeCombo = prevCombo >= 2 && c === 0;
+        const milestone = c > 0 && c % 25 === 0 && c > lastComboMilestone;
+        if (milestone) {
+          lastComboMilestone = c;
+          comboMilestoneSeq += 1;
+        }
+        if (brokeCombo) {
+          comboBreakSeq += 1;
+        }
         combo = c;
         maxCombo = Math.max(maxCombo, c);
+        prevCombo = c;
       }
       const last = events[events.length - 1]!;
       return {
         score,
         combo,
         maxCombo,
+        lastComboMilestone,
+        comboMilestoneSeq,
+        comboBreakSeq,
         accuracy: state.accuracy,
         lastScoreEvent: last,
         lastScoreEventBatch: events,
@@ -323,6 +340,9 @@ export const useGameStore = create<GameState>((set, get) => ({
       score: 0,
       combo: 0,
       maxCombo: 0,
+      lastComboMilestone: 0,
+      comboMilestoneSeq: 0,
+      comboBreakSeq: 0,
       accuracy: 1,
       lastScoreEvent: null,
       lastScoreEventBatch: null,
@@ -371,6 +391,9 @@ export const useGameStore = create<GameState>((set, get) => ({
           score: 0,
           combo: 0,
           maxCombo: 0,
+          lastComboMilestone: 0,
+          comboMilestoneSeq: 0,
+          comboBreakSeq: 0,
           accuracy: 1,
           lastScoreEvent: null,
           lastScoreEventBatch: null,
@@ -388,9 +411,14 @@ export const useGameStore = create<GameState>((set, get) => ({
       }
       void saveTauriAppSettings({
         noteScrollSpeed: settings.noteScrollSpeed,
+        alwaysOnTop: settings.window.alwaysOnTop,
         playbackTimingOffsetMs: settings.playbackTimingOffsetMs,
+        visualNoteOffsetMs: (settings as AppSettings & { visualNoteOffsetMs?: number }).visualNoteOffsetMs ?? 0,
         spotifyClientId: settings.spotifyClientId ?? null,
       });
+      if (patch.window?.alwaysOnTop !== undefined) {
+        void setTauriAlwaysOnTop(settings.window.alwaysOnTop);
+      }
       return {
         settings,
         ...regenPatch,

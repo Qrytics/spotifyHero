@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useGameStore } from "../store/gameStore.js";
 import { toggleSpotifyDebugPanel } from "../lib/spotifyDiagnostics.js";
 import { eventMatchesPlayKey } from "../lib/keybindDisplay.js";
+import { primeHitSound } from "../lib/hitSound.js";
 
 function dispatchLaneDown(laneIndex: number): void {
   window.dispatchEvent(
@@ -39,6 +40,7 @@ export function useKeybinds(): void {
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return;
+      if (!document.hasFocus()) return;
       if (useGameStore.getState().calibrationActive) return;
       const targetEl = e.target as HTMLElement | null;
       if (
@@ -47,6 +49,7 @@ export function useKeybinds(): void {
         return;
       }
       const key = e.key.toLowerCase();
+      if (e.metaKey || e.altKey) return;
 
       if (e.ctrlKey && e.shiftKey && key === "d" && !e.altKey) {
         const el = e.target as HTMLElement | null;
@@ -59,6 +62,7 @@ export function useKeybinds(): void {
       }
 
       if (eventMatchesPlayKey(e, playKeybind)) {
+        primeHitSound();
         const { phase } = useGameStore.getState();
         if (phase === "autoplay" || phase === "manual") {
           e.preventDefault();
@@ -69,6 +73,7 @@ export function useKeybinds(): void {
 
       const laneIndex = laneKeys.findIndex((k) => k.toLowerCase() === key);
       if (laneIndex < 0) return;
+      primeHitSound();
 
       const { phase, chart } = useGameStore.getState();
       if (!chart || (phase !== "autoplay" && phase !== "manual")) return;
@@ -82,6 +87,7 @@ export function useKeybinds(): void {
     };
 
     const onKeyUp = (e: KeyboardEvent) => {
+      if (!document.hasFocus()) return;
       if (useGameStore.getState().calibrationActive) return;
       const targetEl = e.target as HTMLElement | null;
       if (
@@ -90,6 +96,7 @@ export function useKeybinds(): void {
         return;
       }
       const key = e.key.toLowerCase();
+      if (e.metaKey || e.altKey) return;
       const laneIndex = laneKeys.findIndex((k) => k.toLowerCase() === key);
       if (laneIndex < 0) return;
 

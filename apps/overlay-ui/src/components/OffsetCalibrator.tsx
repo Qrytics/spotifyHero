@@ -38,7 +38,7 @@ const LANE_CYCLE_GAP_MS = 950;
 const LANE_HIT_WINDOW_MS = 220;
 const BEAT_TAPS = 8;
 
-const LANE_HEX = ["#e040fb", "#1db954", "#ff9800", "#2196f3"] as const;
+const LANE_HEX = ["#BF5FFF", "#00E5FF", "#FF6B35", "#39FF14"] as const;
 
 function laneCycleMs(): number {
   return LANE_TRAVEL_MS + LANE_CYCLE_GAP_MS;
@@ -69,6 +69,7 @@ export function OffsetCalibrator({ open, onClose }: Props): React.ReactElement |
   const [beatTaps, setBeatTaps] = useState<number[]>([]);
   const beatTapsRef = useRef<number[]>([]);
   const [computedOffset, setComputedOffset] = useState(0);
+  const [visualOffsetDraft, setVisualOffsetDraft] = useState(0);
   const [wrongKeyFlash, setWrongKeyFlash] = useState(false);
   const [beatPulse, setBeatPulse] = useState(0);
 
@@ -84,11 +85,12 @@ export function OffsetCalibrator({ open, onClose }: Props): React.ReactElement |
     beatTapsRef.current = [];
     setBeatTaps([]);
     setComputedOffset(0);
+    setVisualOffsetDraft(settings.visualNoteOffsetMs);
     beginLaneNote();
     return () => {
       useGameStore.getState().setCalibrationActive(false);
     };
-  }, [open, beginLaneNote]);
+  }, [open, beginLaneNote, settings.visualNoteOffsetMs]);
 
   useEffect(() => {
     if (step === "beat") {
@@ -439,13 +441,30 @@ export function OffsetCalibrator({ open, onClose }: Props): React.ReactElement |
               }}
             >
               This shifts chart timing vs Spotify&apos;s reported position. You can fine-tune in
-              Settings.
+              Settings. Visual note offset is separate and does not change scoring.
             </p>
+            <div style={{ marginBottom: "12px" }}>
+              <label style={{ fontSize: "9px", color: "var(--text-muted)", display: "block", marginBottom: "4px" }}>
+                Visual note offset (ms)
+              </label>
+              <input
+                type="range"
+                min={-250}
+                max={250}
+                step={5}
+                value={visualOffsetDraft}
+                onChange={(e) => setVisualOffsetDraft(Number.parseInt(e.target.value, 10))}
+                style={{ width: "100%" }}
+              />
+            </div>
             <div style={{ display: "flex", gap: "8px" }}>
               <button
                 type="button"
                 onClick={() => {
-                  updateSettings({ playbackTimingOffsetMs: computedOffset });
+                  updateSettings({
+                    playbackTimingOffsetMs: computedOffset,
+                    visualNoteOffsetMs: visualOffsetDraft,
+                  });
                   onClose();
                 }}
                 style={{

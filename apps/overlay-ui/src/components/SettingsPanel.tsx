@@ -337,24 +337,69 @@ export function SettingsPanel({
           )}
         </div>
 
-        <label
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: "6px",
-            fontSize: "9px",
-            color: "var(--text)",
-            cursor: "pointer",
-            lineHeight: 1.35,
-          }}
-        >
+        <div>
+          <label style={labelStyle}>Visual note offset (ms)</label>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <input
+              type="range"
+              style={{ flex: 1, minWidth: 0 }}
+              min={-250}
+              max={250}
+              step={5}
+              value={draft.visualNoteOffsetMs}
+              onChange={(e) =>
+                set("visualNoteOffsetMs")(Number.parseInt(e.target.value, 10))
+              }
+            />
+            <span
+              style={{
+                fontSize: "10px",
+                fontWeight: 700,
+                color: "var(--accent)",
+                width: "44px",
+                flexShrink: 0,
+              }}
+            >
+              {draft.visualNoteOffsetMs >= 0 ? "+" : ""}
+              {draft.visualNoteOffsetMs}
+            </span>
+          </div>
+          <span style={{ fontSize: "8px", color: "#666", marginTop: "2px", display: "block" }}>
+            Visual-only shift for where notes meet the receptor.
+          </span>
+        </div>
+
+        <label className="sh-switch-row">
+          <span className="sh-switch-copy">
+            <span className="sh-switch-title">Start new songs in autoplay</span>
+          </span>
           <input
+            className="sh-switch-input"
             type="checkbox"
             checked={draft.autoplay}
             onChange={(e) => set("autoplay")(e.target.checked)}
-            style={{ marginTop: "2px", flexShrink: 0 }}
           />
-          Start new songs in autoplay
+          <span className="sh-switch-track" aria-hidden>
+            <span className="sh-switch-thumb" />
+          </span>
+        </label>
+
+        <label className="sh-switch-row">
+          <span className="sh-switch-copy">
+            <span className="sh-switch-title">Keep overlay always on top</span>
+            <span className="sh-switch-subtitle">Disable if the overlay blocks desktop/window navigation.</span>
+          </span>
+          <input
+            className="sh-switch-input"
+            type="checkbox"
+            checked={draft.window.alwaysOnTop}
+            onChange={(e) =>
+              set("window")({ ...draft.window, alwaysOnTop: e.target.checked })
+            }
+          />
+          <span className="sh-switch-track" aria-hidden>
+            <span className="sh-switch-thumb" />
+          </span>
         </label>
 
         <div style={{ display: "flex", gap: "6px", marginTop: "4px" }}>

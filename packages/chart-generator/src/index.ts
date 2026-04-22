@@ -275,6 +275,7 @@ interface SustainAssignmentCandidate {
   timeMs: number;
   lane: number;
   confidence: number;
+  pitchHz?: number;
 }
 
 function countTapSustain(notes: readonly Note[]): {
@@ -360,6 +361,7 @@ function assignSustainsWithConstraints(
     timeMs: n.timeMs,
     lane: n.lane,
     durationMs: 0,
+    pitchHz: n.pitchHz,
   }));
 
   let consecutiveSustains = 0;
@@ -570,20 +572,20 @@ export function mergeAdjacentHoldNotes(
           if (demerge || !holdCoin) {
             for (let k = i; k <= j; k++) {
               const n = laneNotes[k]!;
-              merged.push({ timeMs: n.timeMs, lane, durationMs: 0 });
+              merged.push({ timeMs: n.timeMs, lane, durationMs: 0, pitchHz: n.pitchHz });
             }
           } else {
-            merged.push({ timeMs: head.timeMs, lane, durationMs: dur });
+            merged.push({ timeMs: head.timeMs, lane, durationMs: dur, pitchHz: head.pitchHz });
           }
         } else {
           for (let k = i; k <= j; k++) {
             const n = laneNotes[k]!;
-            merged.push({ timeMs: n.timeMs, lane, durationMs: 0 });
+            merged.push({ timeMs: n.timeMs, lane, durationMs: 0, pitchHz: n.pitchHz });
           }
         }
         i = j + 1;
       } else {
-        merged.push({ timeMs: first.timeMs, lane, durationMs: 0 });
+        merged.push({ timeMs: first.timeMs, lane, durationMs: 0, pitchHz: first.pitchHz });
         i += 1;
       }
     }
@@ -619,7 +621,7 @@ export function mergeContiguousSustainSeries(notes: readonly Note[]): Note[] {
     while (i < laneNotes.length) {
       const cur = laneNotes[i]!;
       if (cur.durationMs <= eps) {
-        out.push({ timeMs: cur.timeMs, lane, durationMs: 0 });
+        out.push({ timeMs: cur.timeMs, lane, durationMs: 0, pitchHz: cur.pitchHz });
         i += 1;
         continue;
       }
@@ -633,7 +635,7 @@ export function mergeContiguousSustainSeries(notes: readonly Note[]): Note[] {
         tail = next.timeMs + next.durationMs;
         j += 1;
       }
-      out.push({ timeMs: head, lane, durationMs: tail - head });
+      out.push({ timeMs: head, lane, durationMs: tail - head, pitchHz: cur.pitchHz });
       i = j;
     }
   }
@@ -766,7 +768,20 @@ export function generateDeterministicChart(
       validLanes
     );
     placementSalt += 1;
-    candidates.push({ timeMs: event.timeMs, lane, confidence: event.confidence });
+    candidates.push(
+      event.pitchHz && Number.isFinite(event.pitchHz)
+        ? {
+            timeMs: event.timeMs,
+            lane,
+            confidence: event.confidence,
+            pitchHz: event.pitchHz,
+          }
+        : {
+            timeMs: event.timeMs,
+            lane,
+            confidence: event.confidence,
+          }
+    );
     laneLastMs[lane] = event.timeMs;
 
     if (validLanes.length > 1) {
@@ -791,7 +806,20 @@ export function generateDeterministicChart(
           })
           .slice(0, desiredSize - 1);
         for (const laneExtra of extras) {
-          candidates.push({ timeMs: event.timeMs, lane: laneExtra, confidence: event.confidence });
+          candidates.push(
+            event.pitchHz && Number.isFinite(event.pitchHz)
+              ? {
+                  timeMs: event.timeMs,
+                  lane: laneExtra,
+                  confidence: event.confidence,
+                  pitchHz: event.pitchHz,
+                }
+              : {
+                  timeMs: event.timeMs,
+                  lane: laneExtra,
+                  confidence: event.confidence,
+                }
+          );
           laneLastMs[laneExtra] = event.timeMs;
         }
       }

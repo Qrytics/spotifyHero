@@ -31,13 +31,13 @@ pub fn run() {
             .min_inner_size(180.0, 280.0)
             // Cap size so the overlay cannot be stretched to a full-screen panel (felt like it broke the desktop).
             .max_inner_size(640.0, 1200.0)
-            .always_on_top(true)
+            .always_on_top(false)
             .decorations(false)
             .transparent(false)
             // WebView2: disable Ctrl+/wheel page zoom (often mistaken for “everything on my PC scaled”).
             .zoom_hotkeys_enabled(false)
             .maximizable(false)
-            .visible_on_all_workspaces(true)
+            .visible_on_all_workspaces(false)
             .build()
             .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
 
@@ -46,10 +46,17 @@ pub fn run() {
                 .build()
                 .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
 
-            if let Some(x) = store.get("window_x").and_then(|v| v.as_f64()) {
-                // Ignore errors – first launch has no saved position
-                let _ = win.set_position(tauri::PhysicalPosition::new(x as i32, 0));
+            if let (Some(x), Some(y)) = (
+                store.get("window_x").and_then(|v| v.as_f64()),
+                store.get("window_y").and_then(|v| v.as_f64()),
+            ) {
+                let _ = win.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
             }
+            let always_on_top = store
+                .get("always_on_top")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let _ = win.set_always_on_top(always_on_top);
 
             Ok(())
         })

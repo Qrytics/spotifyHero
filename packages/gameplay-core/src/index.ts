@@ -18,10 +18,10 @@ import {
 
 export const DEFAULT_HIT_WINDOWS: HitWindows = {
   /** ±ms — wide perfect band vs chart time (network/audio latency friendly). */
-  perfect: 110,
-  great: 132,
-  good: 168,
-  bad: 215,
+  perfect: 40,
+  great: 60,
+  good: 80,
+  bad: 110,
 };
 
 // Points awarded per judgement
@@ -63,6 +63,8 @@ const HOLD_CHECKPOINT_SPACING_MS = 200;
 const HOLD_MAX_CHECKPOINTS = 8;
 /** Base points per sustain tick (combo multiplier applied). */
 export const HOLD_TICK_BASE_POINTS = 220;
+/** Manual tail leniency: allow slightly early release near hold end without miss. */
+const HOLD_TAIL_RELEASE_GRACE_MS = 70;
 
 /**
  * Sustain gem times from note head through tail `timeMs + durationMs`.
@@ -194,6 +196,9 @@ export class ScoringEngine {
       combo: 0,
       countsTowardAccuracy: true,
     };
+    // #region agent log
+    fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H3',location:'packages/gameplay-core/src/index.ts:failActiveHold',message:'Active hold failed and converted to miss',data:{noteIndex,lane:this.chart.notes[noteIndex]?.lane,combo:this.combo},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     this.pushEvent(event);
     return event;
   }
@@ -307,10 +312,11 @@ export class ScoringEngine {
 
       if (!autoplay) {
         const pressed = laneHeld![hold.lane] ?? false;
+        const earlyReleaseFailBefore = tailTime - HOLD_TAIL_RELEASE_GRACE_MS;
         if (
           !pressed &&
           actualTimeMs >= this.headTime(note) &&
-          actualTimeMs < tailTime
+          actualTimeMs < earlyReleaseFailBefore
         ) {
           const ev = this.failActiveHold(noteIndex);
           if (ev) out.push(ev);
@@ -324,7 +330,9 @@ export class ScoringEngine {
 
         const atTail = hold.nextIdx === hold.checkpointTimes.length - 1;
         const cpHeld = autoplay ? true : laneHeld![hold.lane] ?? false;
-        if (!cpHeld) {
+        const tailGraceSatisfied =
+          atTail && !cpHeld && actualTimeMs >= cp - HOLD_TAIL_RELEASE_GRACE_MS;
+        if (!cpHeld && !tailGraceSatisfied) {
           const ev = this.failActiveHold(noteIndex);
           if (ev) out.push(ev);
           continue outer;
@@ -342,6 +350,9 @@ export class ScoringEngine {
           countsTowardAccuracy: false,
           showHitFx: atTail,
         };
+        // #region agent log
+        if (atTail) fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H1',location:'packages/gameplay-core/src/index.ts:advanceHolds.tail',message:'Tail checkpoint emitted',data:{noteIndex,actualTimeMs,cp,deltaMs:actualTimeMs-cp,lane:hold.lane,nextIdx:hold.nextIdx},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         this.pushEvent(tickEv);
         out.push(tickEv);
 
@@ -368,6 +379,9 @@ export class ScoringEngine {
       if (note.durationMs > 0 && this.activeHolds.has(i)) continue;
 
       if (positionMs - this.headTime(note) > this.windows.bad) {
+        // #region agent log
+        fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H2',location:'packages/gameplay-core/src/index.ts:evaluateMisses',message:'Miss emitted for unresolved note',data:{noteIndex:i,lane:note.lane,durationMs:note.durationMs,positionMs,headTimeMs:this.headTime(note),deltaOverBad:positionMs-this.headTime(note),badWindowMs:this.windows.bad},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         const ev = this.onNoteMissed(i);
         if (ev) out.push(ev);
       }
