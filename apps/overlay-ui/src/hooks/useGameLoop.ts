@@ -27,6 +27,10 @@ const CHART_MOUNT_STALE_MS = 2500;
  * only after many frames so repeated clock sync can recover a stale transport first.
  */
 const FINISH_STALE_WAIT_FRAMES = 180;
+/** Replay detection: large backward jump from near chart end back near chart start. */
+const REPLAY_BACKWARD_JUMP_MS = 3000;
+const REPLAY_FROM_END_WINDOW_MS = 1800;
+const REPLAY_TO_START_WINDOW_MS = 1800;
 
 /** Manual + no lane input + this many consecutive note misses → switch to autoplay. */
 const AFK_MISS_THRESHOLD = 5;
@@ -34,7 +38,11 @@ const AFK_MISS_THRESHOLD = 5;
  * After a physical key-up, treat the lane as still held briefly for sustain checkpoints only.
  * Stops one-frame gaps / OS input jitter from failing an otherwise solid long hold.
  */
-const SUSTAIN_LANE_HELD_GRACE_MS = 55;
+const SUSTAIN_LANE_HELD_GRACE_MS = 170;
+/** When other lanes are actively involved, give extra grace for keyboard matrix ghosting/dropouts. */
+const SUSTAIN_CHORD_HELD_GRACE_MS = 2000;
+/** Brief handoff window so autoplay->manual transitions don't instantly fail active sustains. */
+const MODE_SWITCH_HOLD_GRACE_MS = 320;
 /** Still a bit tighter than default, but far more forgiving than legacy expert timings. */
 const EXPERT_HIT_WINDOWS = {
   perfect: 88,
@@ -142,6 +150,25 @@ function chartStartPlaybackMs(chart: Chart): number {
   return Number.isFinite(min) ? min : 0;
 }
 
+function resetStoreRoundForReplay(currentPhase: "autoplay" | "manual"): void {
+  useGameStore.setState({
+    score: 0,
+    combo: 0,
+    maxCombo: 0,
+    lastComboMilestone: 0,
+    comboMilestoneSeq: 0,
+    comboBreakSeq: 0,
+    accuracy: 1,
+    lastScoreEvent: null,
+    lastScoreEventBatch: null,
+    scoreEventSeq: 0,
+    session: null,
+    trackLifecycle: "playing",
+    phase: currentPhase,
+    usedAutoplayThisRound: currentPhase === "autoplay",
+  });
+}
+
 /**
  * useGameLoop
  *
@@ -189,6 +216,7 @@ export function useGameLoop(): void {
   });
   const countdownResumedTrackRef = useRef<string | null>(null);
   const usedAutoplayRef = useRef(false);
+  const modeLastChangedPerfRef = useRef<number>(performance.now());
 
   useEffect(() => {
     if (!chart) return;
@@ -232,6 +260,7 @@ export function useGameLoop(): void {
     playModeRef.current.setMode(
       phase === "autoplay" ? "autoplay" : "manual"
     );
+    modeLastChangedPerfRef.current = performance.now();
   }, [phase]);
 
   useEffect(() => {
@@ -347,9 +376,6 @@ export function useGameLoop(): void {
       if (!engine) return;
 
       loopFramesForChartRef.current += 1;
-      // #region agent log
-      if (loopFramesForChartRef.current % 120 === 0) fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H0',location:'apps/overlay-ui/src/hooks/useGameLoop.ts:loopHeartbeat',message:'Game loop heartbeat',data:{phase:state.phase,trackLifecycle:state.trackLifecycle,boundedTrack:liveChart.trackId,frame:loopFramesForChartRef.current},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
 
       const { startMs, endMs } = chartBoundsRef.current;
       /** Last chart event (tail) — session must not complete until playhead passes this. */
@@ -400,15 +426,50 @@ export function useGameLoop(): void {
       // Large *backward* jumps (seek) need a scoring reset. Forward jumps (catch-up after
       // throttled rAF or Spotify poll) must NOT clear active holds or lane keys — that was
       // causing sustains to vanish / fail while the player still held the key.
-      if (prev !== null && boundedPos < prev - 3000) {
-        engine.resetSeekState();
+      if (prev !== null && boundedPos < prev - REPLAY_BACKWARD_JUMP_MS) {
+        const replayedFromEnd =
+          chartEndMs > 0 &&
+          prev >= chartEndMs - REPLAY_FROM_END_WINDOW_MS &&
+          boundedPos <= startMs + REPLAY_TO_START_WINDOW_MS;
+        if (replayedFromEnd) {
+          const mode = playModeRef.current.isAutoplay() ? "autoplay" : "manual";
+          engineRef.current = new ScoringEngine(liveChart, {
+            windows: liveChart.difficulty === "expert" ? EXPERT_HIT_WINDOWS : DEFAULT_HIT_WINDOWS,
+            chartLeadInMs: CHART_LEAD_IN_MS,
+          });
+          windowManagerRef.current = new NoteWindowManager(
+            liveChart,
+            2000,
+            liveChart.difficulty === "expert" ? EXPERT_HIT_WINDOWS : DEFAULT_HIT_WINDOWS,
+            CHART_LEAD_IN_MS
+          );
+          consecutiveAfkMissRef.current = 0;
+          usedAutoplayRef.current = mode === "autoplay";
+          resetStoreRoundForReplay(mode);
+        } else {
+          engine.resetSeekState();
+        }
       }
 
-      const laneHeld: boolean[] | null = playModeRef.current.isAutoplay()
+      const modeSwitchGraceActive =
+        !playModeRef.current.isAutoplay() &&
+        performance.now() - modeLastChangedPerfRef.current < MODE_SWITCH_HOLD_GRACE_MS;
+      const laneHeld: boolean[] | null = playModeRef.current.isAutoplay() || modeSwitchGraceActive
         ? null
         : (() => {
             const raw = lanesHeldRef.current;
             const nowPerf = performance.now();
+            const activeHoldCount =
+              (
+                engine as unknown as {
+                  activeHolds?: Map<number, unknown>;
+                }
+              ).activeHolds?.size ?? 0;
+            const anyRawDown = raw.some(Boolean);
+            const sustainSensitiveWindow = anyRawDown || activeHoldCount > 0;
+            const graceMs = sustainSensitiveWindow
+              ? SUSTAIN_CHORD_HELD_GRACE_MS
+              : SUSTAIN_LANE_HELD_GRACE_MS;
             const out: boolean[] = [false, false, false, false];
             for (let l = 0; l < 4; l++) {
               if (raw[l] === true) {
@@ -416,7 +477,7 @@ export function useGameLoop(): void {
                 out[l] = true;
               } else {
                 const lastTrue = laneLastHeldTruePerfRef.current[l]!;
-                out[l] = nowPerf - lastTrue < SUSTAIN_LANE_HELD_GRACE_MS;
+                out[l] = nowPerf - lastTrue < graceMs;
               }
             }
             return out;
@@ -441,6 +502,22 @@ export function useGameLoop(): void {
             scoreFrame.push(event);
           }
         }
+        // If the first rendered autoplay frame lands after some note heads,
+        // catch up those unresolved heads at their exact head time to keep autoplay perfect.
+        const autoplayCatchupHits: number[] = [];
+        for (let i = 0; i < liveChart.notes.length; i++) {
+          if (engine.isResolved(i)) continue;
+          const note = liveChart.notes[i];
+          if (!note) continue;
+          const headMs = noteHeadTimeMs(note, CHART_LEAD_IN_MS);
+          if (headMs <= boundedPos) {
+            const event = engine.onNoteHit(i, headMs);
+            if (event) {
+              scoreFrame.push(event);
+              autoplayCatchupHits.push(i);
+            }
+          }
+        }
       }
 
       const holdEvents = engine.advanceHolds(boundedPos, laneHeld);
@@ -453,17 +530,16 @@ export function useGameLoop(): void {
           consecutiveAfkMissRef.current = 0;
         }
       }
-      // #region agent log
-      if (holdEvents.length > 0) fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H4',location:'apps/overlay-ui/src/hooks/useGameLoop.ts:holdEvents',message:'Hold events emitted in frame',data:{boundedPos,events:holdEvents.map((e)=>({noteIndex:e.noteIndex,judgement:e.judgement,countsTowardAccuracy:e.countsTowardAccuracy,showHitFx:e.showHitFx}))},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-
       const missed = engine.evaluateMisses(boundedPos);
       for (const event of missed) {
         scoreFrame.push(event);
       }
-      // #region agent log
-      if (missed.length > 0) fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H2',location:'apps/overlay-ui/src/hooks/useGameLoop.ts:missed',message:'Miss events emitted in frame',data:{boundedPos,misses:missed.map((e)=>({noteIndex:e.noteIndex,judgement:e.judgement,countsTowardAccuracy:e.countsTowardAccuracy}))},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
+      const activeHoldEntries =
+        (
+          engine as unknown as {
+            activeHolds?: Map<number, { lane: number }>;
+          }
+        ).activeHolds ?? new Map<number, { lane: number }>();
 
       if (scoreFrame.length > 0) {
         useGameStore.getState().onScoreEvents(scoreFrame, noteCount);

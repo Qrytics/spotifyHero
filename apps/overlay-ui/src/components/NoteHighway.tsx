@@ -15,18 +15,24 @@ import { shouldHideNotesForQuietPlayback } from "../lib/playbackVolumeGate.js";
  */
 const LANE_HEX = ["#BF5FFF", "#00E5FF", "#FF6B35", "#39FF14"];
 const LANE_COUNT = 4;
-const NOTE_RADIUS = 15;
+const DEFAULT_NOTE_RADIUS = 15;
 /** Bottom of static target rings (largest arc in paintStatic). */
-const HIT_TARGET_OUTER_R = NOTE_RADIUS + 5;
 /** Pixels between canvas bottom and bottom of target rings — “almost touching”. */
 const HIT_LINE_BOTTOM_PAD = 4;
 const LOOK_BACK_MS = 400;
 /** Time span from hit line to top edge (y=0); scroll speed is hitLineY / LOOK_AHEAD_MS px/ms. */
 const LOOK_AHEAD_MS = 2200;
 
+function noteRadiusFromViewport(width: number, height: number): number {
+  const laneWidth = width / LANE_COUNT;
+  void height;
+  const byLane = laneWidth * 0.18;
+  return Math.min(30, Math.max(12, byLane));
+}
+
 /** Vertical center of hit line / receptors — bottom of outer target ring sits `HIT_LINE_BOTTOM_PAD` px above canvas bottom. */
-function hitLineYFromHeight(height: number): number {
-  return height - HIT_TARGET_OUTER_R - HIT_LINE_BOTTOM_PAD;
+function hitLineYFromHeight(height: number, noteRadius: number): number {
+  return height - (noteRadius + 5) - HIT_LINE_BOTTOM_PAD;
 }
 /**
  * Include notes farther in the future so they render above the canvas top and scroll into view.
@@ -51,6 +57,8 @@ const HIT_RING_EXPANSION = 14;
 const OFF_SCREEN_BOTTOM_PAD = 24;
 /** Small temporal epsilon to avoid precision edge-cases around sustain tails. */
 const TIME_EPSILON_MS = 0.01;
+/** Large backward playhead jump likely means seek/replay; clear visual state. */
+const VISUAL_RESET_BACKWARD_JUMP_MS = 3000;
 
 /** Draw order is time-sorted; score events and visibility use chart `notes` indices — keep both. */
 type SortedNote = { note: Note; chartIndex: number };
@@ -291,6 +299,7 @@ const NoteHighwayInner = (): React.ReactElement => {
       activeSustains: new Map(),
       missSlide: new Set(),
     };
+    let lastVisualPosMs: number | null = null;
 
     const applyOneScoreEvent = (ev: ScoreEvent, ch: Chart): void => {
       if (!ch.notes[ev.noteIndex]) return;
@@ -329,8 +338,15 @@ const NoteHighwayInner = (): React.ReactElement => {
         });
         if (judgementTexts.length > 16) judgementTexts.splice(0, judgementTexts.length - 16);
         const laneWidth = (dimsRef.current.cssW > 0 ? dimsRef.current.cssW : 280) / LANE_COUNT;
+        const noteRadius = noteRadiusFromViewport(
+          dimsRef.current.cssW > 0 ? dimsRef.current.cssW : 280,
+          dimsRef.current.cssH > 0 ? dimsRef.current.cssH : 220
+        );
         const cx = laneFx * laneWidth + laneWidth / 2;
-        const cy = (dimsRef.current.cssH > 0 ? dimsRef.current.cssH : 220) - HIT_TARGET_OUTER_R - HIT_LINE_BOTTOM_PAD;
+        const cy = hitLineYFromHeight(
+          dimsRef.current.cssH > 0 ? dimsRef.current.cssH : 220,
+          noteRadius
+        );
         for (let i = 0; i < 10; i++) {
           const angle = (Math.PI * 2 * i) / 10 + Math.random() * 0.25;
           const speed = 0.9 + Math.random() * 1.7;
@@ -394,9 +410,6 @@ const NoteHighwayInner = (): React.ReactElement => {
           if (current) {
             visibility.activeSustains.set(idx, { ...current, completed: true });
           }
-          // #region agent log
-          fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H1',location:'apps/overlay-ui/src/components/NoteHighway.tsx:applyOneScoreEvent.tail',message:'Tail tick marked sustain completed',data:{noteIndex:idx,endTime:current?.endTime ?? endTime,judgement:ev.judgement,showHitFx:ev.showHitFx},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion
           visibility.goneTap.add(idx);
         }
         visibility.missSlide.delete(idx);
@@ -502,6 +515,12 @@ const NoteHighwayInner = (): React.ReactElement => {
         state.trackLifecycle === "loading" ||
         state.trackLifecycle === "generating"
       ) {
+        if (
+          visibility.activeSustains.size > 0 ||
+          visibility.goneTap.size > 0 ||
+          visibility.missSlide.size > 0
+        ) {
+        }
         visibility.goneTap.clear();
         visibility.activeSustains.clear();
         visibility.missSlide.clear();
@@ -516,6 +535,18 @@ const NoteHighwayInner = (): React.ReactElement => {
 
       const { dpr, lw, lh } = dim;
       const pos = calibratedPlaybackMs() + (state.settings.visualNoteOffsetMs ?? 0);
+      if (lastVisualPosMs !== null && pos < lastVisualPosMs - VISUAL_RESET_BACKWARD_JUMP_MS) {
+        hitEffects.length = 0;
+        laneFlashes.length = 0;
+        judgementTexts.length = 0;
+        particles.length = 0;
+        perfectStreak = 0;
+        edgePulse = null;
+        visibility.goneTap.clear();
+        visibility.activeSustains.clear();
+        visibility.missSlide.clear();
+      }
+      lastVisualPosMs = pos;
 
       const off = rebuildStatic(lw, lh, canvas.width, canvas.height, dpr, c.trackId);
 
@@ -611,8 +642,9 @@ const NoteHighwayInner = (): React.ReactElement => {
 export const NoteHighway = React.memo(NoteHighwayInner);
 
 function paintStatic(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+  const noteRadius = noteRadiusFromViewport(width, height);
   const laneWidth = width / LANE_COUNT;
-  const hitLineY = hitLineYFromHeight(height);
+  const hitLineY = hitLineYFromHeight(height, noteRadius);
 
   const grad = ctx.createLinearGradient(0, 0, 0, height);
   grad.addColorStop(0, "#0e0e18");
@@ -641,12 +673,12 @@ function paintStatic(ctx: CanvasRenderingContext2D, width: number, height: numbe
     const cx = i * laneWidth + laneWidth / 2;
     ctx.fillStyle = "rgba(0,0,0,0.38)";
     ctx.beginPath();
-    ctx.arc(cx, hitLineY, NOTE_RADIUS + 5, 0, Math.PI * 2);
+    ctx.arc(cx, hitLineY, noteRadius + 5, 0, Math.PI * 2);
     ctx.fill();
     ctx.strokeStyle = LANE_HEX[i] ?? "#fff";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(cx, hitLineY, NOTE_RADIUS + 2, 0, Math.PI * 2);
+    ctx.arc(cx, hitLineY, noteRadius + 2, 0, Math.PI * 2);
     ctx.stroke();
   }
 }
@@ -684,7 +716,8 @@ function paintNotes(
   const L = CHART_LEAD_IN_MS;
 
   const laneWidth = width / LANE_COUNT;
-  const hitLineY = hitLineYFromHeight(height);
+  const noteRadius = noteRadiusFromViewport(width, height);
+  const hitLineY = hitLineYFromHeight(height, noteRadius);
   const pxPerMs = hitLineY / lookAheadMs;
 
   const tLow = positionMs - LOOK_BACK_MS;
@@ -710,12 +743,15 @@ function paintNotes(
   }
   ctx.lineWidth = 2;
   ctx.strokeStyle = "rgba(255,255,255,0.42)";
+  const paintedActiveSustains = new Set<number>();
 
   for (; i < n; i++) {
     const { note, chartIndex } = sortedNotes[i]!;
     if (vis.goneTap.has(chartIndex)) continue;
     if (vis.missSlide.has(chartIndex)) continue;
-    if (occluded.has(chartIndex) && !vis.activeSustains.has(chartIndex)) continue;
+    if (occluded.has(chartIndex) && !vis.activeSustains.has(chartIndex)) {
+      continue;
+    }
 
     const headT = noteHeadTimeMs(note, L);
     const endMs = noteTailTimeMs(note, L);
@@ -739,13 +775,10 @@ function paintNotes(
     const cy = yFromTime(hitLineY, pxPerMs, headT, positionMs);
     const hex = LANE_HEX[lane] ?? "#ffffff";
     const pulse = timeUntil > 900 || timeUntil < -900 ? 0 : 1 - Math.abs(timeUntil) / 900;
-    const glowR = NOTE_RADIUS + 5 + pulse * 3;
+    const glowR = noteRadius + 5 + pulse * 3;
     const sustain = vis.activeSustains.get(chartIndex);
     const holdStripOnly = note.durationMs > 0 && sustain?.headHidden === true;
     if (sustain?.completed && positionMs >= endMs - TIME_EPSILON_MS) {
-      // #region agent log
-      fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H1',location:'apps/overlay-ui/src/components/NoteHighway.tsx:paintNotes.completedDelete',message:'Completed sustain removed from active visuals',data:{chartIndex,positionMs,endMs,deltaToEnd:positionMs-endMs,headHidden:sustain.headHidden},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       vis.activeSustains.delete(chartIndex);
       continue;
     }
@@ -754,7 +787,7 @@ function paintNotes(
     const anticipationT =
       timeUntil > 100 || timeUntil < -60 ? 0 : Math.max(0, 1 - Math.abs(timeUntil) / 100);
     const noteScale = 1 + anticipationT * 0.08;
-    const noteR = NOTE_RADIUS * noteScale;
+    const noteR = noteRadius * noteScale;
 
     if (note.durationMs > 0) {
       const cyTail = yFromTime(hitLineY, pxPerMs, endMs, positionMs);
@@ -762,6 +795,9 @@ function paintNotes(
         ? hitLineY + noteR
         : yFromTime(hitLineY, pxPerMs, headT, positionMs) + noteR;
       const h = Math.abs(cyTail - cyHeadBar);
+      if (sustain && h > 0.75) {
+        paintedActiveSustains.add(chartIndex);
+      }
       if (h <= 0.75) {
         if (sustain?.completed || positionMs >= endMs - TIME_EPSILON_MS) {
           vis.goneTap.add(chartIndex);
@@ -831,6 +867,51 @@ function paintNotes(
     }
   }
 
+  for (const [idx, sustain] of vis.activeSustains) {
+    if (paintedActiveSustains.has(idx)) continue;
+    const note = chartNotes[idx];
+    if (!note || note.durationMs <= 0) continue;
+    if (vis.goneTap.has(idx) || vis.missSlide.has(idx)) continue;
+    const headT = noteHeadTimeMs(note, L);
+    const endT = noteTailTimeMs(note, L);
+    if (
+      isSustainTailPastCanvasBottom(hitLineY, pxPerMs, sustain.endTime, positionMs, height) ||
+      positionMs > endT + TIME_EPSILON_MS
+    ) {
+      continue;
+    }
+    const lane = note.lane;
+    const cx = lane * laneWidth + laneWidth / 2;
+    const noteR = noteRadius;
+    const holdStripOnly = sustain.headHidden === true;
+    const cyTail = yFromTime(hitLineY, pxPerMs, endT, positionMs);
+    const cyHeadBar = holdStripOnly
+      ? hitLineY + noteR
+      : yFromTime(hitLineY, pxPerMs, headT, positionMs) + noteR;
+    const h = Math.abs(cyTail - cyHeadBar);
+    if (h <= 0.75) {
+      continue;
+    }
+    const hex = LANE_HEX[lane] ?? "#ffffff";
+    const bodyW = noteR * 2.35;
+    const rCap = Math.min(bodyW * 0.5, h * 0.5);
+    const cornerRadii = [rCap, rCap, rCap, rCap] as const;
+    const shimmer = (Math.sin(nowMs * 0.012 + idx) + 1) * 0.5;
+    ctx.globalAlpha = holdStripOnly ? 0.88 : 0.84;
+    ctx.fillStyle = hex;
+    ctx.shadowColor = hexToRgba(hex, 0.55);
+    ctx.shadowBlur = 8 + shimmer * 6;
+    paintSustainBodyPath(ctx, cx, cyHeadBar, cyTail, bodyW, cornerRadii);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = holdStripOnly ? 0.95 : 0.9;
+    ctx.strokeStyle = "rgba(255,255,255,0.35)";
+    ctx.lineWidth = 1.5;
+    paintSustainBodyPath(ctx, cx, cyHeadBar, cyTail, bodyW, cornerRadii);
+    ctx.stroke();
+    paintedActiveSustains.add(idx);
+  }
+
   paintMissSlidingNotes(
     ctx,
     chartNotes,
@@ -850,7 +931,8 @@ function paintReceptorPressGlow(
   now: number
 ): void {
   const laneWidth = width / LANE_COUNT;
-  const hitLineY = hitLineYFromHeight(height);
+  const noteRadius = noteRadiusFromViewport(width, height);
+  const hitLineY = hitLineYFromHeight(height, noteRadius);
   for (let lane = 0; lane < LANE_COUNT; lane++) {
     const p = press[lane];
     if (!p) continue;
@@ -859,7 +941,7 @@ function paintReceptorPressGlow(
     const cx = lane * laneWidth + laneWidth / 2;
     const col = LANE_HEX[lane] ?? "#fff";
     const age = p.isDown ? Math.min(1, (now - p.downAt) / 90) : Math.max(0, 1 - (now - p.upAt) / 90);
-    const r = NOTE_RADIUS + 7 + age * 2;
+    const r = noteRadius + 7 + age * 2;
     const g = ctx.createRadialGradient(cx, hitLineY, 0, cx, hitLineY, r + 10);
     g.addColorStop(0, hexToRgba(col, 0.3 + age * 0.25));
     g.addColorStop(0.55, hexToRgba(col, 0.13 + age * 0.15));
@@ -888,8 +970,9 @@ function paintMissSlidingNotes(
 ): void {
   if (missSlide.size === 0) return;
 
+  const noteRadius = noteRadiusFromViewport(width, height);
   const laneWidth = width / LANE_COUNT;
-  const hitLineY = hitLineYFromHeight(height);
+  const hitLineY = hitLineYFromHeight(height, noteRadius);
   const pxPerMs = hitLineY / lookAheadMs;
   const toRemove: number[] = [];
 
@@ -906,7 +989,7 @@ function paintMissSlidingNotes(
     const cx = lane * laneWidth + laneWidth / 2;
     const cy = yFromTime(hitLineY, pxPerMs, headT, positionMs);
     const cyTail = yFromTime(hitLineY, pxPerMs, endMs, positionMs);
-    const cyHeadBar = note.durationMs > 0 ? cy + NOTE_RADIUS : cy;
+    const cyHeadBar = note.durationMs > 0 ? cy + noteRadius : cy;
     const bottom = Math.max(cyHeadBar, cyTail);
 
     if (bottom > height + OFF_SCREEN_BOTTOM_PAD) {
@@ -919,7 +1002,7 @@ function paintMissSlidingNotes(
 
     if (note.durationMs > 0) {
       const h = Math.abs(cyTail - cyHeadBar);
-      const bodyW = NOTE_RADIUS * 2.35;
+      const bodyW = noteRadius * 2.35;
       const rCap = Math.min(bodyW * 0.5, h * 0.5);
       const cornerRadii = [rCap, rCap, rCap, rCap] as const;
       ctx.globalAlpha = 0.35;
@@ -936,19 +1019,19 @@ function paintMissSlidingNotes(
     ctx.globalAlpha = 0.22 + pulse * 0.08;
     ctx.fillStyle = hex;
     ctx.beginPath();
-    ctx.arc(cx, cy, NOTE_RADIUS + 5 + pulse * 3, 0, Math.PI * 2);
+    ctx.arc(cx, cy, noteRadius + 5 + pulse * 3, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.globalAlpha = 0.72;
     ctx.fillStyle = hex;
     ctx.beginPath();
-    ctx.arc(cx, cy, NOTE_RADIUS, 0, Math.PI * 2);
+    ctx.arc(cx, cy, noteRadius, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.strokeStyle = "rgba(255,82,82,0.9)";
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(cx, cy, NOTE_RADIUS, 0, Math.PI * 2);
+    ctx.arc(cx, cy, noteRadius, 0, Math.PI * 2);
     ctx.stroke();
   }
 
@@ -977,7 +1060,8 @@ function paintHitEffects(
   now: number
 ): void {
   const laneWidth = width / LANE_COUNT;
-  const hitLineY = hitLineYFromHeight(height);
+  const noteRadius = noteRadiusFromViewport(width, height);
+  const hitLineY = hitLineYFromHeight(height, noteRadius);
 
   for (let i = effects.length - 1; i >= 0; i--) {
     if (now - effects[i]!.t0 > HIT_FX_MS) effects.splice(i, 1);
@@ -994,7 +1078,7 @@ function paintHitEffects(
     const e = easeOutCubic(t);
 
     // Minimal ring pulse (GH-style subtle impact)
-    const rOuter = NOTE_RADIUS + 2 + e * HIT_RING_EXPANSION;
+    const rOuter = noteRadius + 2 + e * HIT_RING_EXPANSION;
     const alphaRing = (1 - t) * (fx.judgement === "perfect" ? 0.72 : 0.56);
     ctx.strokeStyle = col;
     ctx.lineWidth = Math.max(0.9, 2.0 - 1.1 * e);
@@ -1005,7 +1089,7 @@ function paintHitEffects(
 
     const t2 = Math.max(0, t - 0.1) / 0.9;
     const e2 = easeOutCubic(t2);
-    const rMid = NOTE_RADIUS + 1 + e2 * (HIT_RING_EXPANSION * 0.45);
+    const rMid = noteRadius + 1 + e2 * (HIT_RING_EXPANSION * 0.45);
     ctx.globalAlpha = (1 - t2) * 0.3;
     ctx.lineWidth = 1.1;
     ctx.beginPath();
@@ -1015,7 +1099,7 @@ function paintHitEffects(
     // Tight inner tick ring — crisp on perfect only
     if (fx.judgement === "perfect" && t < 0.35) {
       const ti = t / 0.35;
-      const rTick = NOTE_RADIUS + 1 + (1 - ti) * 4;
+      const rTick = noteRadius + 1 + (1 - ti) * 4;
       ctx.globalAlpha = (1 - ti) * 0.55;
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 1.2;
@@ -1073,7 +1157,8 @@ function paintDynamicReceptors(
   now: number
 ): void {
   const laneWidth = width / LANE_COUNT;
-  const hitLineY = hitLineYFromHeight(height);
+  const noteRadius = noteRadiusFromViewport(width, height);
+  const hitLineY = hitLineYFromHeight(height, noteRadius);
   for (let lane = 0; lane < LANE_COUNT; lane++) {
     const age = now - (pop[lane]?.t0 ?? -Infinity);
     const t = age < 120 ? age / 120 : 1;
@@ -1083,12 +1168,12 @@ function paintDynamicReceptors(
     ctx.strokeStyle = hexToRgba(col, 0.7);
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(cx, hitLineY, (NOTE_RADIUS + 2) * bump, 0, Math.PI * 2);
+    ctx.arc(cx, hitLineY, (noteRadius + 2) * bump, 0, Math.PI * 2);
     ctx.stroke();
     ctx.strokeStyle = hexToRgba(col, 0.25);
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    ctx.arc(cx, hitLineY, (NOTE_RADIUS + 8) * (1 + Math.sin(now * 0.003 + lane) * 0.03), 0, Math.PI * 2);
+    ctx.arc(cx, hitLineY, (noteRadius + 8) * (1 + Math.sin(now * 0.003 + lane) * 0.03), 0, Math.PI * 2);
     ctx.stroke();
   }
 }
@@ -1101,7 +1186,8 @@ function paintJudgementTexts(
   now: number
 ): void {
   const laneWidth = width / LANE_COUNT;
-  const baseY = hitLineYFromHeight(height) - 22;
+  const noteRadius = noteRadiusFromViewport(width, height);
+  const baseY = hitLineYFromHeight(height, noteRadius) - (noteRadius + 7);
   for (let i = texts.length - 1; i >= 0; i--) {
     const age = now - texts[i]!.t0;
     if (age > 520) texts.splice(i, 1);

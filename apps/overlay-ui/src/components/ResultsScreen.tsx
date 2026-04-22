@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import { countChartTapsAndHolds } from "@spotifyhero/gameplay-core";
 import { useGameStore } from "../store/gameStore.js";
 import { LeaderboardPanel } from "./LeaderboardPanel.js";
-import { GAME_LOGO_SRC, GAME_TITLE } from "../lib/branding.js";
 
 export function ResultsScreen(): React.ReactElement {
   const session = useGameStore((s) => s.session);
@@ -17,6 +16,7 @@ export function ResultsScreen(): React.ReactElement {
   const pct = Math.round(session.accuracy * 100);
   const kinds = chart ? countChartTapsAndHolds(chart) : null;
   const trackName = playback?.track?.name ?? "Unknown";
+  const albumArt = playback?.track?.albumArt;
 
   return (
     <div
@@ -31,18 +31,33 @@ export function ResultsScreen(): React.ReactElement {
         textAlign: "center",
       }}
     >
-      <img
-        src={GAME_LOGO_SRC}
-        alt={`${GAME_TITLE} logo`}
-        style={{
-          width: 48,
-          height: 48,
-          borderRadius: "50%",
-          objectFit: "cover",
-          border: "1px solid rgba(255,255,255,0.15)",
-          marginBottom: "2px",
-        }}
-      />
+      {albumArt ? (
+        <img
+          src={albumArt}
+          alt={`${trackName} album cover`}
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: "50%",
+            objectFit: "cover",
+            border: "1px solid rgba(255,255,255,0.15)",
+            marginBottom: "2px",
+            background: "rgba(255,255,255,0.06)",
+          }}
+        />
+      ) : (
+        <div
+          aria-label="Album cover unavailable"
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: "50%",
+            border: "1px solid rgba(255,255,255,0.15)",
+            marginBottom: "2px",
+            background: "rgba(255,255,255,0.06)",
+          }}
+        />
+      )}
       <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>{trackName}</div>
       <div style={{ fontSize: "22px", fontWeight: 800, color: "var(--text)" }}>
         {session.score.toLocaleString()}

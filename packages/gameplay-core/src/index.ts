@@ -181,6 +181,24 @@ export class ScoringEngine {
     this.judgementCounts[judgement] += 1;
   }
 
+  /**
+   * Some charts place a tap exactly at a sustain tail on the same lane.
+   * Highway rendering intentionally occludes these taps; scoring should skip them too.
+   */
+  private isTapOverlappingOtherSustainTail(noteIndex: number, note: Note): boolean {
+    if (note.durationMs > 0) return false;
+    const head = this.headTime(note);
+    const tailSlop = 0.5;
+    for (let j = 0; j < this.chart.notes.length; j++) {
+      if (j === noteIndex) continue;
+      const other = this.chart.notes[j];
+      if (!other || other.durationMs <= 0 || other.lane !== note.lane) continue;
+      const otherTail = noteTailTimeMs(other, this.chartLeadInMs);
+      if (Math.abs(head - otherTail) <= tailSlop) return true;
+    }
+    return false;
+  }
+
   private failActiveHold(noteIndex: number): ScoreEvent | null {
     if (!this.activeHolds.has(noteIndex)) return null;
     this.activeHolds.delete(noteIndex);
@@ -196,9 +214,6 @@ export class ScoringEngine {
       combo: 0,
       countsTowardAccuracy: true,
     };
-    // #region agent log
-    fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H3',location:'packages/gameplay-core/src/index.ts:failActiveHold',message:'Active hold failed and converted to miss',data:{noteIndex,lane:this.chart.notes[noteIndex]?.lane,combo:this.combo},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     this.pushEvent(event);
     return event;
   }
@@ -350,9 +365,6 @@ export class ScoringEngine {
           countsTowardAccuracy: false,
           showHitFx: atTail,
         };
-        // #region agent log
-        if (atTail) fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H1',location:'packages/gameplay-core/src/index.ts:advanceHolds.tail',message:'Tail checkpoint emitted',data:{noteIndex,actualTimeMs,cp,deltaMs:actualTimeMs-cp,lane:hold.lane,nextIdx:hold.nextIdx},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         this.pushEvent(tickEv);
         out.push(tickEv);
 
@@ -377,11 +389,12 @@ export class ScoringEngine {
       const note = this.chart.notes[i];
       if (!note) continue;
       if (note.durationMs > 0 && this.activeHolds.has(i)) continue;
+      if (note.durationMs <= 0 && this.isTapOverlappingOtherSustainTail(i, note)) {
+        this.resolvedNotes.add(i);
+        continue;
+      }
 
       if (positionMs - this.headTime(note) > this.windows.bad) {
-        // #region agent log
-        fetch('http://127.0.0.1:7391/ingest/2147cf79-3e8e-4eaa-b12b-93fd11b25b35',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'9830a2'},body:JSON.stringify({sessionId:'9830a2',runId:'pre-fix',hypothesisId:'H2',location:'packages/gameplay-core/src/index.ts:evaluateMisses',message:'Miss emitted for unresolved note',data:{noteIndex:i,lane:note.lane,durationMs:note.durationMs,positionMs,headTimeMs:this.headTime(note),deltaOverBad:positionMs-this.headTime(note),badWindowMs:this.windows.bad},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         const ev = this.onNoteMissed(i);
         if (ev) out.push(ev);
       }
