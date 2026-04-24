@@ -79,8 +79,17 @@ function demoBeatEvents(track: SpotifyTrack): { events: BeatEvent[]; bpm: number
 }
 
 /**
- * When playback switches to a new track, the store enters `loading` until a chart exists.
- * Runs hybrid generation (deterministic + optional ML stub) and calls `setChart`.
+ * useChartGeneration
+ *
+ * Watches the game store for a `loading` phase and triggers the hybrid chart
+ * generator for the current track. When generation completes, calls `setChart`
+ * on the store to transition to `playing`.
+ *
+ * **Mockable:** Replace `HybridChartGenerator` with any object that implements
+ * `generate(trackId, events, bpm, opts)` to supply a custom or test chart.
+ *
+ * **Safe cancellation:** If the track changes or the phase leaves `loading`
+ * before the async generator resolves, the result is discarded.
  */
 export function useChartGeneration(): void {
   const phase = useGameStore((s) => s.phase);

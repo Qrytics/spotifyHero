@@ -13,7 +13,7 @@
     "dev:ui": "pnpm --filter overlay-ui dev",
     "dev:desktop": "pnpm --filter desktop dev",
     "type-check": "pnpm -r type-check",
-    "itch:push": "node scripts/itch-push.js",
+    "itch:push": "node scripts/release/itch-push.js",
     "itch:release": "pnpm build:desktop && pnpm itch:push"
   },
   "devDependencies": {

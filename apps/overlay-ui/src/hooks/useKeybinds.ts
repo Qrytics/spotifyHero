@@ -27,9 +27,23 @@ function dispatchLaneUp(laneIndex: number): void {
 /**
  * useKeybinds
  *
- * Registers global keyboard listeners for:
- *   - Optional play key: toggles autoplay ↔ manual (default Space)
- *   - Lane keys: play hits; first press in autoplay switches to manual (no play key needed)
+ * Registers global keyboard listeners for the game.
+ *
+ * **Inputs (from game store):**
+ *   - `settings.playKeybind` — key that toggles autoplay ↔ manual (default `Space`)
+ *   - `settings.laneKeys` — array of 4 keys for lanes 0–3 (default `["d","f","j","k"]`)
+ *
+ * **Outputs (DOM events dispatched):**
+ *   - `spotifyhero:lanedown` — fired on key-down for a lane key
+ *   - `spotifyhero:lanehit` — fired on key-down with `{ lane, timeMs }` for scoring
+ *   - `spotifyhero:laneup` — fired on key-up for a lane key
+ *
+ * **Side effects:**
+ *   - Calls `togglePlayMode()` on the store when the play key is pressed
+ *   - Calls `primeHitSound()` on first lane key press (unlocks AudioContext)
+ *   - Pressing a lane key while in `autoplay` phase automatically switches to `manual`
+ *
+ * **Mockable:** Dispatch `spotifyhero:lanehit` events manually in tests to simulate input.
  */
 export function useKeybinds(): void {
   const settings = useGameStore((s) => s.settings);
