@@ -1,0 +1,32 @@
+{
+  "name": "@spotifyhero/game-state",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Zustand game store — phase, playback, scoring, and settings for spotifyHero",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@spotifyhero/gameplay-core": "workspace:*",
+    "@spotifyhero/leaderboard-client": "workspace:*",
+    "@spotifyhero/shared-types": "workspace:*",
+    "zod": "^3.23.8",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  }
+}

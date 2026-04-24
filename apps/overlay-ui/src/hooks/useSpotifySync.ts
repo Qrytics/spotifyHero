@@ -38,15 +38,23 @@ function createDefaultPoller(): SpotifyPoller {
  * useSpotifySync
  *
  * Manages the Spotify playback polling loop and drift correction.
- * Drives `setPlayback` on the game store.
  *
- * In the Tauri desktop shell, uses `TauriSpotifyPoller` → `get_playback_state`
- * on a multi-second interval (pause/skip detection; timing uses `playbackClock` between polls).
- * In the browser dev server, uses `MockSpotifyPoller` (see README / `__mockPoller`).
+ * **Inputs:**
+ *   - `poller` (optional) — a `SpotifyPoller` instance; auto-created if omitted.
+ *     In the Tauri desktop shell, uses `TauriSpotifyPoller` (native IPC).
+ *     In the browser dev server, uses `MockSpotifyPoller` (accessible via
+ *     `window.__mockPoller` for manual testing).
  *
- * The effect intentionally runs only on mount (empty dep array): the poller
- * is either provided once at construction time or created once via the mock.
- * `setPlayback` is a stable Zustand action reference that never changes.
+ * **Outputs (dispatched to game store):**
+ *   - `setPlayback(state)` — called every poll cycle with the latest playback state
+ *
+ * **Side effects:**
+ *   - Syncs `playbackClock` so the highway render loop can extrapolate position
+ *     between polls without snapping.
+ *   - Calls `pauseSpotifyPlayback()` via Tauri IPC when the game requests a pause.
+ *
+ * **Mockable:** Pass a custom `SpotifyPoller` implementation to override default
+ * polling behaviour in tests or alternative environments.
  */
 export function useSpotifySync(poller?: SpotifyPoller): void {
   const correctorRef = useRef(new DriftCorrector());

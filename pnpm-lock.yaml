@@ -30,12 +30,18 @@ importers:
       '@spotifyhero/chart-generator':
         specifier: workspace:*
         version: link:../../packages/chart-generator
+      '@spotifyhero/game-state':
+        specifier: workspace:*
+        version: link:../../packages/game-state
       '@spotifyhero/gameplay-core':
         specifier: workspace:*
         version: link:../../packages/gameplay-core
       '@spotifyhero/leaderboard-client':
         specifier: workspace:*
         version: link:../../packages/leaderboard-client
+      '@spotifyhero/note-highway':
+        specifier: workspace:*
+        version: link:../../packages/note-highway
       '@spotifyhero/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -106,6 +112,31 @@ importers:
         specifier: ^1.6.0
         version: 1.6.1(@types/node@25.6.0)
 
+  packages/game-state:
+    dependencies:
+      '@spotifyhero/gameplay-core':
+        specifier: workspace:*
+        version: link:../gameplay-core
+      '@spotifyhero/leaderboard-client':
+        specifier: workspace:*
+        version: link:../leaderboard-client
+      '@spotifyhero/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+      zustand:
+        specifier: ^4.5.2
+        version: 4.5.7(@types/react@18.3.28)(react@18.3.1)
+    devDependencies:
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@25.6.0)
+
   packages/gameplay-core:
     dependencies:
       '@spotifyhero/shared-types':
@@ -131,6 +162,31 @@ importers:
         specifier: workspace:*
         version: link:../shared-types
     devDependencies:
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@25.6.0)
+
+  packages/note-highway:
+    dependencies:
+      '@spotifyhero/game-state':
+        specifier: workspace:*
+        version: link:../game-state
+      '@spotifyhero/gameplay-core':
+        specifier: workspace:*
+        version: link:../gameplay-core
+      '@spotifyhero/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.3
+        version: 18.3.28
       typescript:
         specifier: ^5.4.5
         version: 5.9.3
