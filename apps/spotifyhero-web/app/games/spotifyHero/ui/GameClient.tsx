@@ -16,6 +16,7 @@ type MostPlayedRow = { id: string; title: string; plays: number };
 
 const LANE_KEYS = ["d", "f", "j", "k"] as const;
 const HIT_WINDOW_MS = 90;
+const API_BASE = "/games/spotifyHero/api";
 
 export function GameClient() {
   const [youtubeUrl, setYoutubeUrl] = useState("");
@@ -96,14 +97,14 @@ export function GameClient() {
   }, [playing, chart, gameTimeMs]);
 
   async function refreshSession() {
-    const res = await fetch("/api/auth/me");
+    const res = await fetch(`${API_BASE}/auth/me`);
     const data = (await res.json()) as { player: Player };
     setPlayer(data.player);
     setMode(data.player ? "account" : "guest");
   }
 
   async function register() {
-    const res = await fetch("/api/auth/register", {
+    const res = await fetch(`${API_BASE}/auth/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email, password, displayName }),
@@ -117,7 +118,7 @@ export function GameClient() {
   }
 
   async function login() {
-    const res = await fetch("/api/auth/login", {
+    const res = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email, password }),
@@ -131,54 +132,58 @@ export function GameClient() {
   }
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await fetch(`${API_BASE}/auth/logout`, { method: "POST" });
     setStatusMessage("Logged out.");
     await refreshSession();
   }
 
   async function queueChart() {
-    setJobStatus("Queueing chart...");
-    const res = await fetch("/api/charts/queue", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ youtubeUrl, difficulty }),
-    });
-    const data = (await res.json()) as
-      | { status: "ready"; chartId: string; chart: Chart; title: string }
-      | { status: "queued"; jobId: string }
-      | { error: string };
-    if ("error" in data) {
-      setJobStatus(data.error);
-      return;
-    }
-    if (data.status === "ready") {
-      setChart(data.chart);
-      setChartId(data.chartId);
-      setSongTitle(data.title);
-      setJobStatus("Chart loaded from DB cache.");
-      await refreshLeaderboards(data.chartId);
-      return;
-    }
-    setJobStatus("Generating chart asynchronously...");
-    const poll = window.setInterval(async () => {
-      const statusRes = await fetch(`/api/charts/status/${data.jobId}`);
-      const status = (await statusRes.json()) as
+    try {
+      setJobStatus("Generating chart...");
+      const res = await fetch(`${API_BASE}/charts/queue`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ youtubeUrl, difficulty }),
+      });
+      const data = (await res.json()) as
         | { status: "ready"; chartId: string; chart: Chart; title: string }
-        | { status: string; error?: string };
-      if (status.status === "failed") {
-        window.clearInterval(poll);
-        setJobStatus(status.error ?? "Chart job failed.");
+        | { status: "queued"; jobId: string }
+        | { error: string };
+      if ("error" in data) {
+        setJobStatus(data.error);
         return;
       }
-      if (status.status === "ready" && "chart" in status) {
-        window.clearInterval(poll);
-        setChart(status.chart);
-        setChartId(status.chartId);
-        setSongTitle(status.title);
+      if (data.status === "ready") {
+        setChart(data.chart);
+        setChartId(data.chartId);
+        setSongTitle(data.title);
         setJobStatus("Chart ready.");
-        await refreshLeaderboards(status.chartId);
+        await refreshLeaderboards(data.chartId);
+        return;
       }
-    }, 1500);
+      setJobStatus("Chart queued. Waiting for completion...");
+      const poll = window.setInterval(async () => {
+        const statusRes = await fetch(`${API_BASE}/charts/status/${data.jobId}`);
+        const status = (await statusRes.json()) as
+          | { status: "ready"; chartId: string; chart: Chart; title: string }
+          | { status: string; error?: string };
+        if (status.status === "failed") {
+          window.clearInterval(poll);
+          setJobStatus(status.error ?? "Chart job failed.");
+          return;
+        }
+        if (status.status === "ready" && "chart" in status) {
+          window.clearInterval(poll);
+          setChart(status.chart);
+          setChartId(status.chartId);
+          setSongTitle(status.title);
+          setJobStatus("Chart ready.");
+          await refreshLeaderboards(status.chartId);
+        }
+      }, 1500);
+    } catch (error) {
+      setJobStatus(error instanceof Error ? error.message : "Failed to request chart.");
+    }
   }
 
   function startGame() {
@@ -203,7 +208,7 @@ export function GameClient() {
     setMaxCombo(session.maxCombo);
     setAccuracy(session.accuracy);
     if (player && chartId) {
-      await fetch("/api/scores", {
+      await fetch(`${API_BASE}/scores`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -221,7 +226,7 @@ export function GameClient() {
   }
 
   async function refreshLeaderboards(cid: string) {
-    const res = await fetch(`/api/leaderboard?chartId=${encodeURIComponent(cid)}`);
+    const res = await fetch(`${API_BASE}/leaderboard?chartId=${encodeURIComponent(cid)}`);
     const data = (await res.json()) as {
       topPlayers: LeaderboardRow[];
       mostPlayedSongs: MostPlayedRow[];
