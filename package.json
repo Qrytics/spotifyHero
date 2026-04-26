@@ -9,9 +9,11 @@
     "test": "pnpm -r test",
     "build": "pnpm -r build",
     "build:ui": "pnpm --filter overlay-ui build",
+    "build:web": "pnpm --filter spotifyhero-web build",
     "build:desktop": "pnpm --filter desktop build",
     "dev:ui": "pnpm --filter overlay-ui dev",
     "dev:desktop": "pnpm --filter desktop dev",
+    "dev:web": "pnpm --filter spotifyhero-web dev",
     "type-check": "pnpm -r type-check",
     "itch:push": "node scripts/itch-push.js",
     "itch:release": "pnpm build:desktop && pnpm itch:push"
