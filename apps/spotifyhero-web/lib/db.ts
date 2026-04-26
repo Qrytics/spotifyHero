@@ -3,6 +3,8 @@ import { sql } from "@vercel/postgres";
 export { sql };
 
 export async function ensureSchema(): Promise<void> {
+  await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto;`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS sh_players (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
