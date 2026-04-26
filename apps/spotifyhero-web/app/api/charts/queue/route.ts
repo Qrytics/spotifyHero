@@ -42,10 +42,18 @@ export async function POST(req: Request) {
     await sql`INSERT INTO sh_chart_jobs (youtube_video_id, source_url, status) VALUES (${videoId}, ${parsed.data.youtubeUrl}, 'queued') RETURNING id`;
   const jobId = String(insert.rows[0]?.id ?? "");
 
-  // Best-effort immediate processing while preserving queue semantics.
-  void processJob(jobId, videoId, parsed.data.youtubeUrl, parsed.data.difficulty);
-
-  return NextResponse.json({ status: "queued", jobId, cacheHit: false });
+  const result = await processJob(jobId, videoId, parsed.data.youtubeUrl, parsed.data.difficulty);
+  if (!result.ok) {
+    return NextResponse.json({ status: "failed", jobId, error: result.error }, { status: 500 });
+  }
+  return NextResponse.json({
+    status: "ready",
+    jobId,
+    chartId: result.chartId,
+    chart: result.chart,
+    title: result.title,
+    cacheHit: false,
+  });
 }
 
 async function processJob(jobId: string, videoId: string, sourceUrl: string, difficulty: Difficulty) {
@@ -61,12 +69,19 @@ async function processJob(jobId: string, videoId: string, sourceUrl: string, dif
       await sql`INSERT INTO sh_song_charts (youtube_video_id, source_url, title, chart_json, spectrogram_json, generator_version)
       VALUES (${videoId}, ${sourceUrl}, ${title}, ${JSON.stringify(chart)}::jsonb, ${JSON.stringify(spectrogram)}::jsonb, ${chart.generatorVersion})
       ON CONFLICT (youtube_video_id) DO UPDATE SET chart_json = EXCLUDED.chart_json, spectrogram_json = EXCLUDED.spectrogram_json
-      RETURNING id`;
-    void stored.rows[0]?.id;
+      RETURNING id, chart_json, title`;
+    const row = stored.rows[0] as
+      | { id: string; chart_json: unknown; title: string }
+      | undefined;
+    if (!row) {
+      throw new Error("Chart record missing after upsert.");
+    }
     await sql`UPDATE sh_chart_jobs SET status = 'ready', error_message = NULL, updated_at = NOW() WHERE id = ${jobId}`;
     await sql`DELETE FROM sh_chart_jobs WHERE youtube_video_id = ${videoId} AND id <> ${jobId}`;
+    return { ok: true as const, chartId: row.id, chart: row.chart_json, title: row.title };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to process chart job.";
     await sql`UPDATE sh_chart_jobs SET status = 'failed', error_message = ${message}, updated_at = NOW() WHERE id = ${jobId}`;
+    return { ok: false as const, error: message };
   }
 }
