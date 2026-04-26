@@ -10,7 +10,7 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
-const root = path.join(__dirname, "..");
+const root = path.join(__dirname, "../..");
 const tauriConfPath = path.join(root, "apps/desktop/src-tauri/tauri.conf.json");
 const bundleDir = path.join(
   root,

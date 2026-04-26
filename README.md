@@ -1,5 +1,7 @@
 # spotifyHero 🎵🎮
 
+[![📄 Investor Pitch](https://img.shields.io/badge/📄-Investor%20Pitch-1ed760?style=flat-square)](./PITCH.md)
+
 A desktop overlay game that turns whatever you're listening to on Spotify into a **Friday Night Funkin' / Guitar Hero-style note highway** displayed in a tiny always-on-top window alongside your screen.
 
 Watch notes autoplay, or switch to manual and play the lanes yourself. Climb leaderboards and challenge friends on any song.
@@ -58,6 +60,8 @@ spotifyHero/
 │   └── overlay-ui/       React + Canvas note highway and HUD
 ├── packages/
 │   ├── shared-types/     Zod schemas + TypeScript types (shared data contracts)
+│   ├── game-state/       Zustand game store – phase, playback, scoring, settings
+│   ├── note-highway/     Canvas 2D note highway renderer (swappable)
 │   ├── gameplay-core/    Scoring engine, hit windows, combo, mode toggle
 │   ├── audio-engine/     Spotify poller interface, drift correction utilities
 │   ├── chart-generator/  Hybrid note generation pipeline
@@ -70,7 +74,11 @@ spotifyHero/
 │   ├── integration-spec.md Spotify OAuth, Supabase schema, distribution
 │   └── ai-agent-guide.md How AI agents should navigate and edit this repo
 ├── supabase/migrations/  SQL to create leaderboard table + RLS (run in Dashboard)
-├── scripts/setup/        Bootstrap helpers
+├── scripts/
+│   ├── build/            Build helpers (icon generation)
+│   ├── release/          Release helpers (itch-push.js, itch.env.example)
+│   └── README.md         Script reference
+├── PITCH.md              Investor pitch with architecture diagrams
 ├── pnpm-workspace.yaml
 ├── package.json          Root scripts: lint, test, build
 └── tsconfig.base.json    Shared TypeScript config
@@ -197,7 +205,7 @@ pnpm lint
 
 **One-time:** install [butler](https://itch.io/docs/butler/installing.html), run `butler login`, and create a game on [itch.io](https://itch.io) (note the URL slug, e.g. `spotifyhero` in `https://yoursite.itch.io/spotifyhero`).
 
-**Config:** copy `scripts/itch.env.example` to `scripts/itch.env` and set `ITCH_USER` and `ITCH_GAME` (or set those env vars in your shell).
+**Config:** copy `scripts/release/itch.env.example` to `scripts/release/itch.env` and set `ITCH_USER` and `ITCH_GAME` (or set those env vars in your shell).
 
 **Ship a Windows build:**
 
@@ -351,6 +359,17 @@ Your friend opens the link, sees your score, and loads the same song in spotifyH
 
 ---
 
+## Scripts
+
+Helper scripts live in `scripts/` with subdirectories by purpose. See [`scripts/README.md`](scripts/README.md) for full details.
+
+| Script | Command | Purpose |
+|--------|---------|---------|
+| `scripts/build/generate-tauri-app-icon.ps1` | `pwsh scripts/build/generate-tauri-app-icon.ps1` | Generate all Tauri app icon sizes from source PNG |
+| `scripts/release/itch-push.js` | `pnpm itch:push` | Upload Windows installer to itch.io via butler |
+
+---
+
 ## Contributing
 
 1. Fork and clone the repo.
@@ -367,6 +386,7 @@ AI coding agents: see `docs/ai-agent-guide.md` for the full navigation and editi
 
 | Phase | Status | Goal |
 |-------|--------|------|
+| 0 – Pitch / fundraising | 🔲 Active | Investor deck ([PITCH.md](./PITCH.md)), demo polish, seed round |
 | 1 – Foundation | ✅ Done | Monorepo, Tauri shell, overlay window, input handling |
 | 2 – Gameplay MVP | ✅ Done | Highway renderer, autoplay/manual toggle, scoring + combo |
 | 3 – Chart generation v1 | ✅ Done | Deterministic beat/onset charting + difficulty presets |

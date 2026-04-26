@@ -172,11 +172,26 @@ function resetStoreRoundForReplay(currentPhase: "autoplay" | "manual"): void {
 /**
  * useGameLoop
  *
- * Drives the per-frame game loop:
- *   - Tracks playback position against the active chart.
- *   - In autoplay mode, fires hits for notes in the perfect window.
- *   - Resolves sustain checkpoints and early release.
- *   - Marks missed notes.
+ * Drives the per-frame game loop via `requestAnimationFrame`.
+ *
+ * **Inputs (from game store):**
+ *   - `chart` — the active note chart; a new `ScoringEngine` is created when it changes
+ *   - `phase` — `autoplay` | `manual` | `paused`; controls hit dispatch and scoring
+ *   - `settings.difficulty` — determines hit windows (Expert uses tighter defaults)
+ *
+ * **Outputs (dispatched to game store):**
+ *   - `onScoreEvents(events, totalNotes)` — batched hit/miss events each frame
+ *   - `setSession(session)` — called once when all notes are resolved and the chart ends
+ *   - `setPhase("idle")` — called if chart finishes with no notes (empty chart guard)
+ *
+ * **Side channels (DOM events):**
+ *   - Listens for `spotifyhero:lanehit`, `spotifyhero:lanedown`, `spotifyhero:laneup`
+ *     dispatched by `useKeybinds` to receive manual lane input.
+ *
+ * **Mockable / testable:** The loop only reads from the store and dispatches events;
+ * swap the store values with `useGameStore.setState(...)` in tests.
+ *
+ * Notes:
  *   - Pushes ScoreEvents to the store via useGameStore.getState() to
  *     avoid stale-closure issues with the RAF loop.
  */
