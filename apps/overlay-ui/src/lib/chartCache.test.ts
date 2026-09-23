@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { ONSET_ANALYSIS_VERSION } from "@spotifyhero/onset-analysis";
+import { ONSET_ANALYSIS_VERSION } from "@spotifyhero/onset-analysis/version";
 import type { Chart } from "@spotifyhero/shared-types";
 import {
   clearMemoryChartCache,

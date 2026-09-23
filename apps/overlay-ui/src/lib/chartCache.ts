@@ -16,14 +16,14 @@
  * defensive posture as `loadCredentials()`.
  */
 import { ChartSchema, type Chart, type Difficulty } from "@spotifyhero/shared-types";
-// The only *value* the main bundle takes from this package is a version string —
-// the DSP itself reaches the main thread only through the worker or the
-// main-thread fallback's dynamic import. `"sideEffects": false` over there is
-// what lets the bundler drop the rest on the strength of that.
-import {
-  ONSET_ANALYSIS_VERSION,
-  type OnsetAnalysisResult,
-} from "@spotifyhero/onset-analysis";
+// The only *value* the main bundle takes from this package is a version string,
+// so it comes from the `./version` subpath: taking it from the package root
+// would merge the whole DSP into this chunk, because the analyser is also
+// dynamically imported (`analyzeAudioBuffer`'s main-thread fallback) and Rollup
+// will not split a module that something imports statically. The type import
+// below is erased, so it can address the root.
+import { ONSET_ANALYSIS_VERSION } from "@spotifyhero/onset-analysis/version";
+import type { OnsetAnalysisResult } from "@spotifyhero/onset-analysis";
 
 const STORAGE_KEY = "spotifyHero_chartCache_v1";
 

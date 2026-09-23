@@ -10,7 +10,10 @@
  * Layering: depends on `shared-types` and nothing else.
  */
 
-export { analyzeOnsets, ONSET_ANALYSIS_VERSION } from "./analyzeOnsets.js";
+export { analyzeOnsets } from "./analyzeOnsets.js";
+// Also on the `./version` subpath, which is where bundled callers should get it:
+// importing it from here drags the DSP into their chunk. See `version.ts`.
+export { ONSET_ANALYSIS_VERSION } from "./version.js";
 export type {
   NormalizationProfile,
   OnsetAnalysisOptions,

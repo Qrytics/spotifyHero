@@ -18,6 +18,10 @@ decoded samples itself.
   onto the detected onsets.
 - `PitchEstimator` – pass 2, one FFT per onset; harmonic-sum scoring over observed peaks.
 - `Fft`, `hannWindow`, `frameTimeMs` – the primitives, exported for tests and diagnostics.
+- `ONSET_ANALYSIS_VERSION` – cache key; bump it whenever a change here would chart the same
+  audio differently. Import it from **`@spotifyhero/onset-analysis/version`**, not the package
+  root: a root-level value import makes the bundler merge this whole package into the importer's
+  chunk, even though the analyser is only ever loaded dynamically or in a worker.
 
 ## Design notes
 - `lib: ["ES2022"]` — **no DOM**. Not `OfflineAudioContext`: there is no spectral-flux node,

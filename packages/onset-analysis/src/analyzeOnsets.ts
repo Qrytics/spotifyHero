@@ -26,12 +26,10 @@ import { computeOnsetEnvelope } from "./spectralFlux.js";
 import { estimateTempo, refineBeatPhaseMs } from "./tempo.js";
 import { frameAtTimeMs, frameTimeMs } from "./window.js";
 
-/**
- * Bump when a change here would produce different `BeatEvent`s for the same
- * audio — retuned constants included. Callers that persist charts key on it, so
- * forgetting the bump means yesterday's chart is replayed by today's analyser.
- */
-export const ONSET_ANALYSIS_VERSION = "onset-1";
+// Lives in `version.ts` so cache and diagnostics callers can read it without
+// importing the DSP. Bump it there when a change here would chart the same audio
+// differently.
+export { ONSET_ANALYSIS_VERSION } from "./version.js";
 
 /**
  * Structurally identical to the chart generator's `SongNormalizationProfile`.

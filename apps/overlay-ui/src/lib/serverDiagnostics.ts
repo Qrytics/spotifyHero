@@ -19,7 +19,8 @@ import type {
   OnsetAnalysisResult,
   OnsetAnalysisStats,
 } from "@spotifyhero/onset-analysis";
-import { ONSET_ANALYSIS_VERSION } from "@spotifyhero/onset-analysis";
+// Subpath, not the package root — see the note in `chartCache.ts`.
+import { ONSET_ANALYSIS_VERSION } from "@spotifyhero/onset-analysis/version";
 import { activePlaybackClock } from "./playback/activeSource.js";
 import { audioOutputLatencyMs } from "./audioContext.js";
 

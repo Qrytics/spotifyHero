@@ -272,14 +272,16 @@ Nothing in the plan's phases. `pnpm build`, `type-check` and `test` are green fo
 `./packages/**` + `./apps/overlay-ui` (the root `pnpm build` still dies in `apps/desktop` for want
 of `cargo` — unrelated, and true before this work).
 
-What is left is the real-hardware verification below, plus three deliberate deferrals:
+What is left is the real-hardware verification below, plus two deliberate deferrals:
 - per-mode hit windows (`TODO(hit-windows)` in `useGameLoop.ts`);
-- the Navidrome credential in the keychain rather than localStorage (`TODO(keychain)`);
-- **the DSP ships in the main Vite chunk**, contrary to what Phase 4 intended. `chartCache.ts` and
-  `serverDiagnostics.ts` import `ONSET_ANALYSIS_VERSION` from the package index, and a module that
-  is both statically and dynamically imported does not get its own chunk (`vite build` warns
-  about exactly this). It costs bundle size, not frame time — analysis still runs in the worker.
-  The fix is a `./version` subpath export on `@spotifyhero/onset-analysis` with no DSP behind it.
+- the Navidrome credential in the keychain rather than localStorage (`TODO(keychain)`).
+
+**Fixed after Phase 6:** the DSP was shipping in the main Vite chunk, contrary to what Phase 4
+intended — `chartCache.ts` and `serverDiagnostics.ts` imported `ONSET_ANALYSIS_VERSION` from the
+package index, and Rollup will not split a module that anything imports statically. The constant
+now lives in `packages/onset-analysis/src/version.ts` behind a `./version` subpath export with no
+DSP in its graph. The analyser is a lazy 10 kB chunk again (main chunk 380 → 371 kB), and the
+`vite build` warning is gone. **Import the version from the subpath, never from the root.**
 
 ## Not committed
 

@@ -2,15 +2,14 @@
  * Message types shared by `onsetWorker.ts` and `analyzeAudioBuffer.ts`.
  *
  * In their own module so the main thread can talk to the worker with
- * `import type` only, never `import`.
+ * `import type` only, never `import`. Importing the worker module itself would
+ * pull the whole DSP package into the main chunk, which is exactly what running
+ * it in a worker is meant to avoid.
  *
- * That keeps the worker module out of the main graph, but the DSP itself is in
- * the main chunk anyway: `chartCache.ts` and `serverDiagnostics.ts` import
- * `ONSET_ANALYSIS_VERSION` from the package index, and a module that is both
- * statically and dynamically imported (see `analyzeAudioBuffer`'s main-thread
- * fallback) is not split out. Costs bundle size, not frame time — the analysis
- * still runs in the worker. Splitting it would mean a `./version` subpath export
- * with no DSP behind it.
+ * Keeping that true takes one more rule: the version string comes from
+ * `@spotifyhero/onset-analysis/version`, never from the package root. Rollup
+ * will not split a module that anything imports statically, so a single
+ * root-level value import is enough to merge the analyser back into this chunk.
  */
 import type { OnsetAnalysisResult } from "@spotifyhero/onset-analysis";
 
