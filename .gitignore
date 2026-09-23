@@ -3,6 +3,11 @@ dist/
 .turbo/
 *.tsbuildinfo
 
+# Next.js build output (apps/spotifyhero-web). Vercel builds from source; the
+# webpack caches under here are ~100 MB of binary .pack files.
+.next/
+.vercel/
+
 # Tauri build artifacts
 apps/desktop/src-tauri/target/
 
