@@ -10,8 +10,12 @@ function isTauriRuntime(): boolean {
  * Re-run periodically so a reconnect after scope upgrade picks up profile.
  */
 export function useSpotifyProfileSync(): void {
+  const musicSource = useGameStore((s) => s.settings.musicSource);
+
   useEffect(() => {
     if (!isTauriRuntime()) return;
+    // Music-server mode must not have its player name overwritten by Spotify.
+    if (musicSource === "server") return;
 
     let cancelled = false;
     const tick = async (): Promise<void> => {
@@ -35,5 +39,5 @@ export function useSpotifyProfileSync(): void {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [musicSource]);
 }

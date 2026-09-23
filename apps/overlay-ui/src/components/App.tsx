@@ -11,11 +11,22 @@ import { useGameLoop } from "../hooks/useGameLoop.js";
 import { useKeybinds } from "../hooks/useKeybinds.js";
 import { useSpotifyProfileSync } from "../hooks/useSpotifyProfileSync.js";
 import { SpotifyDiagnosticsPanel } from "./SpotifyDiagnosticsPanel.js";
+import { ServerDiagnosticsPanel } from "./server/ServerDiagnosticsPanel.js";
+import { TrackLoadingIndicator } from "./TrackLoadingIndicator.js";
 import { SettingsPanel } from "./SettingsPanel.js";
 import { OffsetCalibrator } from "./OffsetCalibrator.js";
 import { WindowChrome } from "./WindowChrome.js";
 import { loadTauriAppSettings } from "../lib/tauriSettings.js";
 import { LeaderboardPanel } from "./LeaderboardPanel.js";
+import { SourcePicker } from "./server/SourcePicker.js";
+import { ServerLibraryScreen } from "./server/ServerLibraryScreen.js";
+import { useActivePlaybackSource } from "../hooks/useActivePlaybackSource.js";
+import { useServerChartGeneration } from "../hooks/useServerChartGeneration.js";
+import { serverPlaybackSource } from "../lib/playback/activeSource.js";
+import {
+  clearPreparedAudio,
+  setPreparedAudio,
+} from "../lib/analysis/preparedAudio.js";
 
 export function App(): React.ReactElement {
   const phase = useGameStore((s) => s.phase);
@@ -30,11 +41,20 @@ export function App(): React.ReactElement {
   const [calibratorOpen, setCalibratorOpen] = useState(false);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
+  /** Download / decode failure for a music-server track, shown above the library. */
+  const [serverError, setServerError] = useState<string | null>(null);
+  // `analysisStage`/`analysisProgress` are subscribed inside
+  // `TrackLoadingIndicator`, not here — they update ~80 times per analysis.
 
-  // Core game hooks
+  // Core game hooks. `useActivePlaybackSource` goes first: it registers the live
+  // source, and everything below reads the clock through that registry.
+  useActivePlaybackSource();
   useSpotifySync();
   useSpotifyProfileSync();
   useChartGeneration();
+  // Charts a server track from real onset analysis. Exactly one of these two
+  // acts on any given track — each returns early on the other's source.
+  useServerChartGeneration();
   useGameLoop();
   useKeybinds();
 
@@ -105,18 +125,7 @@ export function App(): React.ReactElement {
       )}
 
       {(trackLifecycle === "loading" || trackLifecycle === "generating") && (
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "var(--accent)",
-            fontSize: "14px",
-          }}
-        >
-          {trackLifecycle === "generating" ? "Generating chart…" : "Loading track…"}
-        </div>
+        <TrackLoadingIndicator lifecycle={trackLifecycle} />
       )}
       {/* Countdown overlay intentionally disabled: chart generation is fast enough now. */}
 
@@ -130,7 +139,67 @@ export function App(): React.ReactElement {
             flexDirection: "column",
           }}
         >
-          <IdleScreen onOpenSettings={() => setSettingsOpen(true)} />
+          {settings.musicSource === null ? (
+            <SourcePicker />
+          ) : settings.musicSource === "spotify" ? (
+            <IdleScreen onOpenSettings={() => setSettingsOpen(true)} />
+          ) : (
+            <>
+              {serverError && (
+                <div
+                  style={{
+                    flexShrink: 0,
+                    padding: "5px 8px",
+                    fontSize: "8px",
+                    lineHeight: 1.35,
+                    color: "#ff7c7c",
+                    background: "rgba(255,80,80,0.08)",
+                  }}
+                >
+                  {serverError}
+                </div>
+              )}
+              <ServerLibraryScreen
+                onOpenSettings={() => setSettingsOpen(true)}
+                onChangeSource={() =>
+                  useGameStore.getState().updateSettings({ musicSource: null })
+                }
+                onSelectSong={(song, client) => {
+                  setServerError(null);
+                  const store = useGameStore.getState();
+                  // `loading` so the library screen yields to the progress text;
+                  // `prepare()` resolves before any audio starts. Handing the
+                  // decoded buffer to `setPreparedAudio` is what releases
+                  // `useServerChartGeneration`, which is already waiting on it
+                  // (`prepare()` writes `playback` into the store before it
+                  // resolves, so that hook usually gets there first).
+                  store.setPhase("loading");
+                  store.setAnalysisProgress("downloading", 0);
+                  void serverPlaybackSource()
+                    .prepare(client, song, {
+                      onProgress: (stage, progress) =>
+                        useGameStore
+                          .getState()
+                          .setAnalysisProgress(stage, progress),
+                    })
+                    .then(({ track, buffer }) => {
+                      setPreparedAudio(track.id, buffer);
+                    })
+                    .catch((e: unknown) => {
+                      setServerError(
+                        e instanceof Error ? e.message : String(e)
+                      );
+                      clearPreparedAudio();
+                      const s = useGameStore.getState();
+                      s.setAnalysisProgress(null, null);
+                      // Back to the library, not `setPlayback({trackId: null})`,
+                      // which would land in `paused` with no track.
+                      s.resetRound();
+                    });
+                }}
+              />
+            </>
+          )}
         </div>
       )}
       <LeaderboardPanel
@@ -153,7 +222,13 @@ export function App(): React.ReactElement {
         open={calibratorOpen}
         onClose={() => setCalibratorOpen(false)}
       />
-      <SpotifyDiagnosticsPanel />
+      {/* One debug panel at a time (both are fixed to the bottom of the
+          window): whichever music source is actually in use. */}
+      {settings.musicSource === "server" ? (
+        <ServerDiagnosticsPanel />
+      ) : (
+        <SpotifyDiagnosticsPanel />
+      )}
     </div>
   );
 }

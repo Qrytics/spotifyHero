@@ -10,6 +10,9 @@
   --bg: #0d0d0f;
   --surface: #1a1a1f;
   --accent: #1db954; /* Spotify green */
+  /* Music-server ("My Library") mode — deliberately not Spotify green, so the
+     primary music source does not look like it belongs to Spotify. */
+  --accent-library: #7c5cff;
   --accent2: #ff4081;
   --text: #f0f0f0;
   --text-muted: #888;
@@ -411,4 +414,118 @@ html, body, #root {
 
 .leaderboard-error {
   color: #ff7c7c;
+}
+
+/* ---------------------------------------------------------------------------
+   Music-server library browser (180px-wide overlay: vertical lists only)
+   --------------------------------------------------------------------------- */
+
+.sh-lib-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.sh-lib-row:hover:not(:disabled) {
+  background: rgba(124, 92, 255, 0.14);
+}
+
+.sh-lib-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.sh-lib-row-title {
+  font-size: 9.5px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sh-lib-row-sub {
+  font-size: 8px;
+  line-height: 1.25;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sh-lib-tab {
+  flex: 1;
+  padding: 3px 0;
+  border: none;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 8.5px;
+  cursor: pointer;
+}
+
+.sh-lib-tab[aria-selected="true"] {
+  color: var(--accent-library);
+  border-bottom-color: var(--accent-library);
+}
+
+.sh-lib-input {
+  width: 100%;
+  border: 1px solid #383846;
+  border-radius: 5px;
+  background: #101016;
+  color: var(--text);
+  padding: 4px 6px;
+  font-size: 9px;
+  min-width: 0;
+}
+
+.sh-lib-input:focus {
+  outline: none;
+  border-color: var(--accent-library);
+}
+
+/* Track pipeline progress (download → decode → analyse → chart). The
+   indeterminate variant covers the stages that cannot report a fraction:
+   `decodeAudioData` and chart generation are single opaque calls. */
+
+.sh-lib-progress {
+  width: 100%;
+  max-width: 220px;
+  height: 4px;
+  border-radius: 2px;
+  background: #23232e;
+  overflow: hidden;
+}
+
+.sh-lib-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent-library);
+  /* Progress arrives ~80 times per analysis; a short ease keeps it from
+     looking like it steps. */
+  transition: width 120ms linear;
+}
+
+.sh-lib-progress-fill-indeterminate {
+  width: 40%;
+  transition: none;
+  animation: sh-lib-progress-slide 1100ms ease-in-out infinite;
+}
+
+@keyframes sh-lib-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
 }

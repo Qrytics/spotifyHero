@@ -42,6 +42,9 @@ importers:
       '@spotifyhero/note-highway':
         specifier: workspace:*
         version: link:../../packages/note-highway
+      '@spotifyhero/onset-analysis':
+        specifier: workspace:*
+        version: link:../../packages/onset-analysis
       '@spotifyhero/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -102,7 +105,7 @@ importers:
         version: 5.10.0
       next:
         specifier: ^14.2.5
-        version: 14.2.35(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+        version: 14.2.35(@babel/core@7.29.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -242,6 +245,22 @@ importers:
       '@types/react':
         specifier: ^18.3.3
         version: 18.3.28
+      typescript:
+        specifier: ^5.4.5
+        version: 5.9.3
+      vitest:
+        specifier: ^1.6.0
+        version: 1.6.1(@types/node@25.6.0)
+
+  packages/onset-analysis:
+    dependencies:
+      '@spotifyhero/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
+    devDependencies:
+      '@types/node':
+        specifier: ^25.6.0
+        version: 25.6.0
       typescript:
         specifier: ^5.4.5
         version: 5.9.3
@@ -2284,7 +2303,7 @@ snapshots:
 
   nanoid@3.3.11: {}
 
-  next@14.2.35(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
+  next@14.2.35(@babel/core@7.29.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
       '@next/env': 14.2.35
       '@swc/helpers': 0.5.5
@@ -2294,7 +2313,7 @@ snapshots:
       postcss: 8.4.31
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
-      styled-jsx: 5.1.1(react@18.3.1)
+      styled-jsx: 5.1.1(@babel/core@7.29.0)(react@18.3.1)
     optionalDependencies:
       '@next/swc-darwin-arm64': 14.2.33
       '@next/swc-darwin-x64': 14.2.33
@@ -2484,10 +2503,12 @@ snapshots:
     dependencies:
       js-tokens: 9.0.1
 
-  styled-jsx@5.1.1(react@18.3.1):
+  styled-jsx@5.1.1(@babel/core@7.29.0)(react@18.3.1):
     dependencies:
       client-only: 0.0.1
       react: 18.3.1
+    optionalDependencies:
+      '@babel/core': 7.29.0
 
   tinybench@2.9.0: {}
 

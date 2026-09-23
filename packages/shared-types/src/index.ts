@@ -4,17 +4,36 @@ import { z } from "zod";
 // Song / Track
 // ---------------------------------------------------------------------------
 
-export const SpotifyTrackSchema = z.object({
+/**
+ * A playable track, from Spotify or from a personal music server.
+ *
+ * Deliberately source-agnostic: reusing one track shape is what lets the game
+ * loop, highway, HUD, results and leaderboard work with both music sources
+ * without a parallel type.
+ */
+export const TrackSchema = z.object({
   id: z.string(),
   name: z.string(),
   artists: z.array(z.string()),
   /** Spotify image URLs are usually https; avoid strict URL() validation (browser vs Node edge cases). */
   albumArt: z.string().optional(),
   durationMs: z.coerce.number().int().positive(),
+  /**
+   * Tempo hint. Spotify fills this from Audio Features; server tracks leave it
+   * absent because the real tempo comes from onset analysis and lands on
+   * `Chart.bpm`. Only `demoBeatEvents` (the Spotify path) reads it.
+   */
   bpm: z.number().positive().optional(),
+  /** Album title — the music-server library UI shows it; harmless elsewhere. */
+  album: z.string().optional(),
 });
 
-export type SpotifyTrack = z.infer<typeof SpotifyTrackSchema>;
+export type Track = z.infer<typeof TrackSchema>;
+
+/** @deprecated Use `TrackSchema` — kept so existing imports keep compiling. */
+export const SpotifyTrackSchema = TrackSchema;
+/** @deprecated Use `Track`. */
+export type SpotifyTrack = Track;
 
 // ---------------------------------------------------------------------------
 // Note chart
@@ -170,9 +189,17 @@ export const PlaybackStateSchema = z.object({
   isPlaying: z.boolean(),
   positionMs: z.coerce.number().nonnegative(),
   trackId: z.string().nullable(),
-  track: SpotifyTrackSchema.nullable(),
+  track: TrackSchema.nullable(),
   /** Spotify Web API `device.volume_percent` (0–100), when present. */
   volumePercent: z.number().int().min(0).max(100).nullable().optional(),
+  /**
+   * Which music source produced this state.
+   *
+   * Optional rather than `.default("spotify")` so every existing `setPlayback`
+   * call site still type-checks under `exactOptionalPropertyTypes`.
+   * **Consumers must treat `undefined` as `"spotify"`.**
+   */
+  source: z.enum(["spotify", "server"]).optional(),
 });
 export type PlaybackState = z.infer<typeof PlaybackStateSchema>;
 
@@ -190,8 +217,25 @@ export const WindowSettingsSchema = z.object({
 });
 export type WindowSettings = z.infer<typeof WindowSettingsSchema>;
 
+/** Where the game gets its music. `null` = the user has not chosen yet. */
+export const MusicSourceSchema = z.enum(["spotify", "server"]);
+export type MusicSource = z.infer<typeof MusicSourceSchema>;
+
 export const AppSettingsSchema = z.object({
   window: WindowSettingsSchema.default({}),
+  /**
+   * `null` shows the source picker on the idle screen. Existing installs lack
+   * the key, so they see the picker once — that is how the feature is discovered.
+   * Not mirrored into Tauri's `settings.json`: nothing native reads it.
+   */
+  musicSource: MusicSourceSchema.nullable().default(null),
+  /**
+   * Calibration offset for the music-server path (ms). **Separate** from
+   * `playbackTimingOffsetMs` on purpose: the Spotify value bakes in
+   * report/anchor bias, so sharing it would wreck a carefully calibrated
+   * Spotify setting the moment a local track plays.
+   */
+  serverPlaybackTimingOffsetMs: z.number().int().min(-500).max(500).default(0),
   /** >1 = faster scrolling (shorter lookahead window). ~0.45–5. */
   noteScrollSpeed: z.number().min(0.45).max(5).default(1),
   /**

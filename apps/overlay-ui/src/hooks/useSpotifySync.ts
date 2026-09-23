@@ -57,6 +57,7 @@ function createDefaultPoller(): SpotifyPoller {
  * polling behaviour in tests or alternative environments.
  */
 export function useSpotifySync(poller?: SpotifyPoller): void {
+  const musicSource = useGameStore((s) => s.settings.musicSource);
   const correctorRef = useRef(new DriftCorrector());
   const lastAppliedRef = useRef<{
     isPlaying: boolean;
@@ -66,6 +67,12 @@ export function useSpotifySync(poller?: SpotifyPoller): void {
   } | null>(null);
 
   useEffect(() => {
+    // Music-server mode: stay completely out of the way. Without this guard the
+    // poller calls `pauseSpotifyPlayback()` on track change and pushes a
+    // *different* trackId into `setPlayback`, which wipes the server chart and
+    // loops `phase: "loading"` forever.
+    if (musicSource === "server") return;
+
     const p: SpotifyPoller = poller ?? createDefaultPoller();
 
     p.onStateChange((state) => {
@@ -133,5 +140,5 @@ export function useSpotifySync(poller?: SpotifyPoller): void {
       p.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally empty: poller identity is stable after mount
+  }, [musicSource]); // poller identity is stable after mount; only the source can flip
 }

@@ -71,6 +71,13 @@ export function SettingsPanel({
   };
   const speedFillPct = `${((draft.noteScrollSpeed - 0.45) / (5 - 0.45)) * 100}%`;
 
+  /** Timing calibration is per music source — see `calibratedPlaybackMs()`. */
+  const timingOffsetKey =
+    draft.musicSource === "server"
+      ? ("serverPlaybackTimingOffsetMs" as const)
+      : ("playbackTimingOffsetMs" as const);
+  const timingOffsetMs = draft[timingOffsetKey];
+
   const inputStyle: React.CSSProperties = {
     width: "100%",
     padding: "4px 8px",
@@ -164,6 +171,47 @@ export function SettingsPanel({
         </p>
 
         <div>
+          <label style={labelStyle}>Music source</label>
+          <div style={{ display: "flex", gap: "4px" }}>
+            {(
+              [
+                ["server", "My Library"],
+                ["spotify", "Spotify"],
+              ] as const
+            ).map(([value, label]) => {
+              const active = draft.musicSource === value;
+              const accent =
+                value === "server" ? "var(--accent-library)" : "var(--accent)";
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => set("musicSource")(value)}
+                  style={{
+                    flex: 1,
+                    padding: "5px 6px",
+                    fontSize: "9px",
+                    fontWeight: active ? 700 : 500,
+                    borderRadius: "5px",
+                    border: `1px solid ${active ? accent : "#333"}`,
+                    background: active ? "rgba(255,255,255,0.05)" : "transparent",
+                    color: active ? accent : "var(--text-muted)",
+                    cursor: "pointer",
+                  }}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <span style={{ fontSize: "8px", color: "#666", marginTop: "2px", display: "block" }}>
+            My Library streams from your own music server and the game plays the
+            audio. Spotify needs you to press play there.
+          </span>
+        </div>
+
+        {draft.musicSource !== "server" && (
+        <div>
           <label style={labelStyle}>Spotify Client ID (optional)</label>
           <input
             style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", fontSize: "10px" }}
@@ -197,6 +245,7 @@ export function SettingsPanel({
             </span>
           )}
         </div>
+        )}
 
         <div>
           <label style={labelStyle}>Play mode toggle key (optional)</label>
@@ -284,7 +333,12 @@ export function SettingsPanel({
         </div>
 
         <div>
-          <label style={labelStyle}>Hit timing offset (ms)</label>
+          {/* Each music source keeps its own offset: the Spotify value bakes in
+              report/anchor bias, so sharing it would wreck a calibrated Spotify
+              setting the moment a local track plays. */}
+          <label style={labelStyle}>
+            Hit timing offset (ms){draft.musicSource === "server" ? " — My Library" : ""}
+          </label>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <input
               type="range"
@@ -292,9 +346,9 @@ export function SettingsPanel({
               min={-500}
               max={500}
               step={5}
-              value={draft.playbackTimingOffsetMs}
+              value={timingOffsetMs}
               onChange={(e) =>
-                set("playbackTimingOffsetMs")(Number.parseInt(e.target.value, 10))
+                set(timingOffsetKey)(Number.parseInt(e.target.value, 10))
               }
             />
             <span
@@ -306,8 +360,8 @@ export function SettingsPanel({
                 flexShrink: 0,
               }}
             >
-              {draft.playbackTimingOffsetMs >= 0 ? "+" : ""}
-              {draft.playbackTimingOffsetMs}
+              {timingOffsetMs >= 0 ? "+" : ""}
+              {timingOffsetMs}
             </span>
           </div>
           <span style={{ fontSize: "8px", color: "#666", marginTop: "2px", display: "block" }}>

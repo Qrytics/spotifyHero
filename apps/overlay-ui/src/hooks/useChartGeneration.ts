@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { HybridChartGenerator } from "@spotifyhero/chart-generator";
-import type { BeatEvent, SpotifyTrack } from "@spotifyhero/shared-types";
+import type { BeatEvent, Track } from "@spotifyhero/shared-types";
 import { useGameStore } from "../store/gameStore.js";
 
 /**
@@ -9,7 +9,7 @@ import { useGameStore } from "../store/gameStore.js";
  * generator’s confidence-first density filter can separate Easy (strong beats) from Expert (full grid).
  * Coincident times keep the highest-confidence event.
  */
-function demoBeatEvents(track: SpotifyTrack): { events: BeatEvent[]; bpm: number } {
+function demoBeatEvents(track: Track): { events: BeatEvent[]; bpm: number } {
   /** Spotify Audio Features tempo (filled by Tauri); fallback only if unavailable. */
   const bpm = track.bpm ?? 120;
   const beatMs = 60_000 / bpm;
@@ -97,6 +97,10 @@ export function useChartGeneration(): void {
 
   useEffect(() => {
     if (phase !== "loading" || !trackId) return;
+    // Music-server tracks are charted by `useServerChartGeneration` from real
+    // onset analysis. `demoBeatEvents` and its 2000 ms phase bias stay exactly
+    // as they are, for Spotify, where there is no audio to analyse.
+    if (useGameStore.getState().playback?.source === "server") return;
     useGameStore.setState({ trackLifecycle: "generating" });
 
     const playback = useGameStore.getState().playback;

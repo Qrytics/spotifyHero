@@ -1,5 +1,13 @@
 import type { ScoreEvent } from "@spotifyhero/shared-types";
+import { getAudioContext, resumeAudioContext } from "./audioContext.js";
 
+/**
+ * The context is shared with music-server playback (`lib/audioContext.ts`) so
+ * `primeHitSound()` unlocks both and the two can never drift. The gain +
+ * compressor chain below stays **SFX-only**: music connects straight to
+ * `ctx.destination`, because routing it through this compressor would duck the
+ * song on every hit.
+ */
 let audioCtx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
 let compressor: DynamicsCompressorNode | null = null;
@@ -13,27 +21,24 @@ let hitBatch: HitEventMeta[] = [];
 let missPending = false;
 
 function ensureAudioContext(): AudioContext | null {
-  try {
-    if (!audioCtx || audioCtx.state === "closed") {
-      audioCtx = new window.AudioContext();
-      masterGain = audioCtx.createGain();
-      compressor = audioCtx.createDynamicsCompressor();
-      compressor.threshold.value = -16;
-      compressor.knee.value = 20;
-      compressor.ratio.value = 5;
-      compressor.attack.value = 0.005;
-      compressor.release.value = 0.12;
-      masterGain.gain.value = 0.7;
-      masterGain.connect(compressor);
-      compressor.connect(audioCtx.destination);
-    }
-    if (audioCtx.state === "suspended") {
-      void audioCtx.resume().catch(() => {});
-    }
-    return audioCtx;
-  } catch {
-    return null;
+  const ctx = getAudioContext();
+  if (!ctx) return null;
+  // Rebuild the SFX chain if this is a different context than we last wired.
+  if (audioCtx !== ctx || !masterGain) {
+    audioCtx = ctx;
+    masterGain = ctx.createGain();
+    compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.value = -16;
+    compressor.knee.value = 20;
+    compressor.ratio.value = 5;
+    compressor.attack.value = 0.005;
+    compressor.release.value = 0.12;
+    masterGain.gain.value = 0.7;
+    masterGain.connect(compressor);
+    compressor.connect(ctx.destination);
   }
+  if (ctx.state === "suspended") void resumeAudioContext();
+  return ctx;
 }
 
 function scheduleTone(ctx: AudioContext, frequency: number, durationMs: number, gainPeak: number): void {

@@ -9,7 +9,9 @@ Single source of truth for all data shapes exchanged between the UI, game engine
 - `src/index.ts` – all exports (types + schemas).
 
 ## Key exports
-- `SpotifyTrackSchema`, `SpotifyTrack`
+- `TrackSchema`, `Track` (`SpotifyTrackSchema` / `SpotifyTrack` are deprecated aliases)
+- `PlaybackStateSchema`, `PlaybackState` — `source?: "spotify" | "server"`, **undefined means spotify**
+- `MusicSourceSchema`, `MusicSource`
 - `NoteSchema`, `Note`, `ChartSchema`, `Chart`
 - `GameSessionSchema`, `GameSession`
 - `LeaderboardSchema`, `LeaderboardEntrySchema`

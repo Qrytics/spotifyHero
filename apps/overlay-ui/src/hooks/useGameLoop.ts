@@ -10,9 +10,12 @@ import {
   noteHeadTimeMs,
 } from "@spotifyhero/gameplay-core";
 import type { Chart, ScoreEvent } from "@spotifyhero/shared-types";
-import { playbackClock } from "../lib/playbackClock.js";
 import { calibratedPlaybackMs } from "../lib/playbackPosition.js";
-import { resumeSpotifyPlayback } from "../lib/spotifyControl.js";
+import {
+  activePlaybackClock,
+  activePlaybackSource,
+  playbackRestartSeq,
+} from "../lib/playback/activeSource.js";
 import {
   isSpotifyPlaybackTooQuietForNotes,
   shouldHideNotesForQuietPlayback,
@@ -27,6 +30,12 @@ const CHART_MOUNT_STALE_MS = 2500;
  * only after many frames so repeated clock sync can recover a stale transport first.
  */
 const FINISH_STALE_WAIT_FRAMES = 180;
+/**
+ * Same wait for an exact clock. There is no stale transport to recover from —
+ * the clock *is* the audio — so the ~3 s stall before results is pure delay.
+ * Not 0: `allNotesResolved` needs a frame or two to settle after the last note.
+ */
+const EXACT_FINISH_STALE_WAIT_FRAMES = 2;
 /** Replay detection: large backward jump from near chart end back near chart start. */
 const REPLAY_BACKWARD_JUMP_MS = 3000;
 const REPLAY_FROM_END_WINDOW_MS = 1800;
@@ -43,7 +52,15 @@ const SUSTAIN_LANE_HELD_GRACE_MS = 170;
 const SUSTAIN_CHORD_HELD_GRACE_MS = 2000;
 /** Brief handoff window so autoplay->manual transitions don't instantly fail active sustains. */
 const MODE_SWITCH_HOLD_GRACE_MS = 320;
-/** Still a bit tighter than default, but far more forgiving than legacy expert timings. */
+/**
+ * Still a bit tighter than default, but far more forgiving than legacy expert timings.
+ *
+ * TODO(hit-windows): these are padded for Spotify's poll jitter, and an exact
+ * clock could justify tightening them. Deliberately NOT done with music-server
+ * mode: hit windows are the highest-risk feel change in the codebase, and
+ * per-source windows would make leaderboard scores incomparable. Separate PR,
+ * with its own calibration pass.
+ */
 const EXPERT_HIT_WINDOWS = {
   perfect: 88,
   great: 108,
@@ -116,11 +133,17 @@ function collectAutoplayCenterHits(
 /**
  * Re-anchor transport to current Spotify playback when a chart mounts so we never
  * judge the new chart using the previous song's timeline (instant mass-miss bug).
+ *
+ * No-op on an exact clock, which has no `sync()` to call and nothing to re-anchor
+ * to: it reads the audio node we are playing from. Guarding here covers every
+ * caller at once, which is why the call sites below stay as they were.
  */
 function syncClockToStorePlayback(chart: Chart): void {
+  const clock = activePlaybackClock();
+  if (clock.isExact) return;
   const pb = useGameStore.getState().playback;
   if (!pb?.trackId || pb.trackId !== chart.trackId) return;
-  playbackClock.sync(
+  clock.sync(
     pb.positionMs ?? 0,
     pb.isPlaying ?? false,
     pb.trackId
@@ -232,6 +255,17 @@ export function useGameLoop(): void {
   const countdownResumedTrackRef = useRef<string | null>(null);
   const usedAutoplayRef = useRef(false);
   const modeLastChangedPerfRef = useRef<number>(performance.now());
+  /**
+   * Is the live clock exact (locally decoded audio) or extrapolated (Spotify polls)?
+   *
+   * One boolean, refreshed on chart mount and once per frame, rather than
+   * `if (musicSource === "server")` scattered through the loop: what every branch
+   * below actually cares about is whether the playhead can be trusted, not which
+   * server the bytes came from.
+   */
+  const exactClockRef = useRef(false);
+  /** Last seen `playbackRestartSeq()` — an exact restart announces itself. */
+  const restartSeqRef = useRef(playbackRestartSeq());
 
   useEffect(() => {
     if (!chart) return;
@@ -263,6 +297,10 @@ export function useGameLoop(): void {
       endMs: chartEndPlaybackMs(chart, CHART_LEAD_IN_MS),
     };
     countdownResumedTrackRef.current = null;
+    exactClockRef.current = activePlaybackClock().isExact;
+    // Adopt the current count, so a restart from a *previous* round cannot fire
+    // a spurious reset on this chart's first frame.
+    restartSeqRef.current = playbackRestartSeq();
     playModeRef.current.setMode(settings.autoplay ? "autoplay" : "manual");
     usedAutoplayRef.current = settings.autoplay;
     useGameStore.setState({ usedAutoplayThisRound: settings.autoplay });
@@ -339,12 +377,41 @@ export function useGameLoop(): void {
     }
     if (!chart) return;
 
+    /**
+     * Rebuild scoring for a from-the-top replay of `c`.
+     *
+     * Defined once per effect run rather than inside `loop` — the loop body must
+     * not allocate per frame.
+     */
+    const restartRoundScoring = (c: Chart): void => {
+      const mode = playModeRef.current.isAutoplay() ? "autoplay" : "manual";
+      const windows =
+        c.difficulty === "expert" ? EXPERT_HIT_WINDOWS : DEFAULT_HIT_WINDOWS;
+      engineRef.current = new ScoringEngine(c, {
+        windows,
+        chartLeadInMs: CHART_LEAD_IN_MS,
+      });
+      windowManagerRef.current = new NoteWindowManager(
+        c,
+        2000,
+        windows,
+        CHART_LEAD_IN_MS
+      );
+      consecutiveAfkMissRef.current = 0;
+      usedAutoplayRef.current = mode === "autoplay";
+      resetStoreRoundForReplay(mode);
+    };
+
     const loop = () => {
       const state = useGameStore.getState();
       if (state.phase !== "autoplay" && state.phase !== "manual") return;
 
       const liveChart = state.chart;
       if (!liveChart) return;
+
+      // Cheap enough per frame (one property read, no allocation) and it means a
+      // mode switch mid-session cannot leave the loop on the wrong assumption.
+      exactClockRef.current = activePlaybackClock().isExact;
 
       if (state.calibrationActive) {
         rafRef.current = requestAnimationFrame(loop);
@@ -366,7 +433,9 @@ export function useGameLoop(): void {
         useGameStore.setState({ trackLifecycle: "playing", countdownUntilMs: null });
         if (countdownResumedTrackRef.current !== liveChart.trackId) {
           countdownResumedTrackRef.current = liveChart.trackId;
-          void resumeSpotifyPlayback();
+          // Whichever source is live. `SpotifyPlaybackSource.play()` is exactly
+          // the `resumeSpotifyPlayback()` this replaced.
+          void activePlaybackSource()?.play();
         }
       }
 
@@ -408,7 +477,11 @@ export function useGameLoop(): void {
       const sinceChartMount =
         performance.now() - chartMountPerfRef.current;
 
+      // Both recovery blocks below exist for a *stale extrapolated* playhead left
+      // over from the previous song. An exact clock cannot be stale, so they would
+      // only ever mis-fire on it — the constants stay untouched for Spotify.
       if (
+        !exactClockRef.current &&
         scoreClampMs > 0 &&
         !mountStaleResyncDoneRef.current &&
         sinceChartMount < CHART_MOUNT_STALE_MS &&
@@ -424,6 +497,7 @@ export function useGameLoop(): void {
       }
 
       if (
+        !exactClockRef.current &&
         scoreClampMs > 0 &&
         !earlyTailResyncDoneRef.current &&
         pos > scoreClampMs &&
@@ -441,26 +515,21 @@ export function useGameLoop(): void {
       // Large *backward* jumps (seek) need a scoring reset. Forward jumps (catch-up after
       // throttled rAF or Spotify poll) must NOT clear active holds or lane keys — that was
       // causing sustains to vanish / fail while the player still held the key.
-      if (prev !== null && boundedPos < prev - REPLAY_BACKWARD_JUMP_MS) {
+      // A source with transport events announces its own restart, so we do not
+      // have to infer one from the playhead at all. The heuristic stays as the
+      // `else`: Spotify has no restart event, and it is also the safety net for a
+      // restart event that never arrived.
+      const restartSeq = playbackRestartSeq();
+      if (restartSeq !== restartSeqRef.current) {
+        restartSeqRef.current = restartSeq;
+        restartRoundScoring(liveChart);
+      } else if (prev !== null && boundedPos < prev - REPLAY_BACKWARD_JUMP_MS) {
         const replayedFromEnd =
           chartEndMs > 0 &&
           prev >= chartEndMs - REPLAY_FROM_END_WINDOW_MS &&
           boundedPos <= startMs + REPLAY_TO_START_WINDOW_MS;
         if (replayedFromEnd) {
-          const mode = playModeRef.current.isAutoplay() ? "autoplay" : "manual";
-          engineRef.current = new ScoringEngine(liveChart, {
-            windows: liveChart.difficulty === "expert" ? EXPERT_HIT_WINDOWS : DEFAULT_HIT_WINDOWS,
-            chartLeadInMs: CHART_LEAD_IN_MS,
-          });
-          windowManagerRef.current = new NoteWindowManager(
-            liveChart,
-            2000,
-            liveChart.difficulty === "expert" ? EXPERT_HIT_WINDOWS : DEFAULT_HIT_WINDOWS,
-            CHART_LEAD_IN_MS
-          );
-          consecutiveAfkMissRef.current = 0;
-          usedAutoplayRef.current = mode === "autoplay";
-          resetStoreRoundForReplay(mode);
+          restartRoundScoring(liveChart);
         } else {
           engine.resetSeekState();
         }
@@ -590,7 +659,10 @@ export function useGameLoop(): void {
         (pos >= chartEndMs ||
           (trackDurMs > 0 && chartEndMs > trackDurMs && pos >= trackDurMs - 150));
       const canFinishResults =
-        loopFramesForChartRef.current > FINISH_STALE_WAIT_FRAMES &&
+        loopFramesForChartRef.current >
+          (exactClockRef.current
+            ? EXACT_FINISH_STALE_WAIT_FRAMES
+            : FINISH_STALE_WAIT_FRAMES) &&
         allNotesResolved(engine, liveChart);
 
       if (playheadPastChartEnd && canFinishResults) {

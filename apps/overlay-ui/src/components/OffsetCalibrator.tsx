@@ -4,7 +4,7 @@ import {
   eventMatchesPlayKey,
   formatKeybindLabel,
 } from "../lib/keybindDisplay.js";
-import { playbackClock } from "../lib/playbackClock.js";
+import { activePlaybackClock } from "../lib/playback/activeSource.js";
 import {
   computePlaybackTimingOffsetFromTaps,
 } from "../lib/offsetCalibration.js";
@@ -164,7 +164,8 @@ export function OffsetCalibrator({ open, onClose }: Props): React.ReactElement |
 
       setBeatPulse((n) => n + 1);
 
-      const pos = playbackClock.estimateMs();
+      // Whichever source is live — calibration has to work in both modes.
+      const pos = activePlaybackClock().estimateMs();
       beatTapsRef.current.push(pos);
       setBeatTaps([...beatTapsRef.current]);
 
@@ -461,8 +462,13 @@ export function OffsetCalibrator({ open, onClose }: Props): React.ReactElement |
               <button
                 type="button"
                 onClick={() => {
+                  // Per music source, like the Settings slider: the Spotify
+                  // value bakes in report/anchor bias that means nothing for
+                  // locally decoded audio.
                   updateSettings({
-                    playbackTimingOffsetMs: computedOffset,
+                    ...(settings.musicSource === "server"
+                      ? { serverPlaybackTimingOffsetMs: computedOffset }
+                      : { playbackTimingOffsetMs: computedOffset }),
                     visualNoteOffsetMs: visualOffsetDraft,
                   });
                   onClose();

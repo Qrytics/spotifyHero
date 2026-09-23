@@ -1,6 +1,7 @@
 import React from "react";
 import { useGameStore } from "../store/gameStore.js";
 import { formatKeybindLabel } from "../lib/keybindDisplay.js";
+import { ServerTransportControls } from "./server/ServerTransportControls.js";
 
 type PlayBottomBarProps = {
   onOpenSettings: () => void;
@@ -19,6 +20,8 @@ export function PlayBottomBar({
   const phase = useGameStore((s) => s.phase);
   const lastEvent = useGameStore((s) => s.lastScoreEvent);
   const settings = useGameStore((s) => s.settings);
+  /** `undefined` means Spotify — see `PlaybackStateSchema.source`. */
+  const serverMode = useGameStore((s) => s.playback?.source) === "server";
 
   const laneLabels = settings.laneKeys.map((k) => {
     const raw = k.trim();
@@ -100,30 +103,40 @@ export function PlayBottomBar({
         </span>
       ) : null}
 
-      <div
-        title={lanesTitle}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "3px",
-          whiteSpace: "nowrap",
-          flex: "0 0 auto",
-        }}
-      >
-        {laneLabels.map((lane, idx) => (
-          <span
-            key={`${lane}-${idx}`}
-            style={{
-              fontSize: "8px",
-              fontWeight: 700,
-              color: "rgba(255,255,255,0.9)",
-              letterSpacing: "0.01em",
-            }}
-          >
-            {lane}
-          </span>
-        ))}
-      </div>
+      {serverMode && <ServerTransportControls />}
+
+      {/*
+        The lane-key strip yields to the transport controls in server mode: this
+        bar is `nowrap` inside a window that can be 180 px wide, and transport is
+        the more important of the two. The keys are still on the highway and in
+        Settings.
+      */}
+      {!serverMode && (
+        <div
+          title={lanesTitle}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "3px",
+            whiteSpace: "nowrap",
+            flex: "0 0 auto",
+          }}
+        >
+          {laneLabels.map((lane, idx) => (
+            <span
+              key={`${lane}-${idx}`}
+              style={{
+                fontSize: "8px",
+                fontWeight: 700,
+                color: "rgba(255,255,255,0.9)",
+                letterSpacing: "0.01em",
+              }}
+            >
+              {lane}
+            </span>
+          ))}
+        </div>
+      )}
 
       {lastEvent ? (
         <span style={{ ...judgementStyle(lastEvent.judgement), flex: "0 0 auto" }}>

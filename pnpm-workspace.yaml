@@ -2,3 +2,11 @@ packages:
   - 'apps/*'
   - 'packages/*'
   - 'services/*'
+allowBuilds:
+  # transitive optional ws speedup; the JS fallback is fine
+  bufferutil: false
+  # vite/vitest bundler — needs its platform binary
+  esbuild: true
+  # spotifyhero-web/lib/audioExtract.ts reads ffmpegPath; the postinstall
+  # is what downloads that binary
+  ffmpeg-static: true

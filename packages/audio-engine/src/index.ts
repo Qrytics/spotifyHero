@@ -1,5 +1,17 @@
 import type { BeatEvent, PlaybackState } from "@spotifyhero/shared-types";
 
+export { PlaybackClockImpl, IGNORE_DRIFT_MS } from "./extrapolatingClock.js";
+export type { NowFn } from "./extrapolatingClock.js";
+
+export type {
+  ExactPlaybackClock,
+  ExtrapolatedPlaybackClock,
+  PlaybackClock,
+  PlaybackSource,
+  PlaybackSourceCapabilities,
+  PlaybackSourceEvent,
+} from "./playbackSource.js";
+
 // ---------------------------------------------------------------------------
 // Interfaces / contracts
 // ---------------------------------------------------------------------------

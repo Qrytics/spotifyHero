@@ -167,6 +167,19 @@ interface GameState {
   spotifyUser: SpotifyUserProfile | null;
   /** True while timing calibrator is open — pauses scoring loop and lane keybinds. */
   calibrationActive: boolean;
+  /**
+   * 0–1 progress of the music-server track pipeline, or null when idle.
+   * Rendered inside the existing `trackLifecycle === "generating"` branch —
+   * deliberately **no** new `TrackLifecycleState`: `loading` = downloading and
+   * `generating` = decode + analyse + chart is a correct reading of that enum.
+   */
+  analysisProgress: number | null;
+  analysisStage:
+    | "downloading"
+    | "decoding"
+    | "analyzing"
+    | "charting"
+    | null;
 
   // Actions
   setPhase: (phase: GamePhase) => void;
@@ -181,6 +194,11 @@ interface GameState {
   updateSettings: (patch: Partial<AppSettings>) => void;
   setSpotifyUser: (user: SpotifyUserProfile | null) => void;
   setCalibrationActive: (active: boolean) => void;
+  /** Report music-server pipeline progress; pass `(null, null)` to clear. */
+  setAnalysisProgress: (
+    stage: GameState["analysisStage"],
+    progress: number | null
+  ) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +206,21 @@ interface GameState {
 // ---------------------------------------------------------------------------
 
 const initialSettings = buildInitialSettings();
+
+/**
+ * Play mode a newly loading chart should carry over from the round it replaces —
+ * the interactive autoplay ↔ manual choice outlives the chart it was made on.
+ *
+ * `null` means "no choice to carry over" (we were idle/loading/showing results),
+ * and `setChart` then falls back to `settings.autoplay`.
+ */
+function inheritedPlayMode(
+  state: Pick<GameState, "phase" | "lastPlayPhase">
+): "autoplay" | "manual" | null {
+  if (state.phase === "autoplay" || state.phase === "manual") return state.phase;
+  if (state.phase === "paused") return state.lastPlayPhase;
+  return null;
+}
 
 export const useGameStore = create<GameState>((set, get) => ({
   phase: "idle",
@@ -212,8 +245,13 @@ export const useGameStore = create<GameState>((set, get) => ({
   usedAutoplayThisRound: false,
   spotifyUser: null,
   calibrationActive: false,
+  analysisProgress: null,
+  analysisStage: null,
 
   setCalibrationActive: (active) => set({ calibrationActive: active }),
+
+  setAnalysisProgress: (analysisStage, analysisProgress) =>
+    set({ analysisStage, analysisProgress }),
 
   setPhase: (phase) => {
     const trackLifecycle: TrackLifecycleState =
@@ -273,47 +311,35 @@ export const useGameStore = create<GameState>((set, get) => ({
         scoreEventSeq: 0,
         session: null,
         usedAutoplayThisRound: false,
-        sessionPlayMode: "autoplay",
+        sessionPlayMode: inheritedPlayMode(get()),
       });
       return;
     }
 
+    // Resuming an existing chart: back into the mode the player last chose.
     const phaseNow = get().phase;
-    const playPhase: GamePhase = "autoplay";
-
-    if (phaseNow === "paused") {
-      set({
-        phase: playPhase,
-        trackLifecycle: "playing",
-        lastPlayPhase:
-          playPhase === "autoplay" || playPhase === "manual"
-            ? playPhase
-            : get().lastPlayPhase,
-      });
-    } else if (phaseNow === "idle") {
-      set({
-        phase: playPhase,
-        trackLifecycle: "playing",
-        lastPlayPhase:
-          playPhase === "autoplay" || playPhase === "manual"
-            ? playPhase
-            : get().lastPlayPhase,
-      });
+    if (phaseNow === "paused" || phaseNow === "idle") {
+      set({ phase: get().lastPlayPhase, trackLifecycle: "playing" });
     }
   },
 
   setChart: (chart) =>
     set((state) => {
-      const phase: GamePhase = "autoplay";
-      const nextLast =
-        phase === "autoplay" || phase === "manual" ? phase : state.lastPlayPhase;
+      // The mode carried over from the previous round wins; with none to carry,
+      // `settings.autoplay` decides. Hard-coding "autoplay" here is what used to
+      // make that setting inert.
+      const phase: "autoplay" | "manual" =
+        state.sessionPlayMode ?? (state.settings.autoplay ? "autoplay" : "manual");
       return {
         chart,
         phase,
         trackLifecycle: "playing",
         countdownUntilMs: null,
+        // Consumed — a later track change re-derives it from the live phase.
         sessionPlayMode: null,
-        lastPlayPhase: nextLast,
+        analysisProgress: null,
+        analysisStage: null,
+        lastPlayPhase: phase,
       };
     }),
 
@@ -414,6 +440,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       trackLifecycle: "idle",
       countdownUntilMs: null,
       sessionPlayMode: null,
+      analysisProgress: null,
+      analysisStage: null,
       lastPlayPhase: state.settings.autoplay ? "autoplay" : "manual",
     })),
 
@@ -438,12 +466,6 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       let regenPatch: Partial<GameState> = {};
       if (difficultyRegen) {
-        let inherit: "autoplay" | "manual" | null = null;
-        if (state.phase === "autoplay" || state.phase === "manual") {
-          inherit = state.phase;
-        } else if (state.phase === "paused") {
-          inherit = state.lastPlayPhase;
-        }
         regenPatch = {
           phase: "loading",
           trackLifecycle: "loading",
@@ -460,7 +482,7 @@ export const useGameStore = create<GameState>((set, get) => ({
           scoreEventSeq: 0,
           session: null,
           usedAutoplayThisRound: false,
-          sessionPlayMode: inherit,
+          sessionPlayMode: inheritedPlayMode(state),
         };
       }
 

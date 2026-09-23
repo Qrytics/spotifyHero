@@ -19,6 +19,7 @@
     "@spotifyhero/gameplay-core": "workspace:*",
     "@spotifyhero/leaderboard-client": "workspace:*",
     "@spotifyhero/note-highway": "workspace:*",
+    "@spotifyhero/onset-analysis": "workspace:*",
     "@spotifyhero/shared-types": "workspace:*",
     "@supabase/supabase-js": "^2.103.3",
     "@tauri-apps/api": "^2.3.0",
