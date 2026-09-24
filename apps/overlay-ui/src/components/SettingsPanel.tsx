@@ -433,6 +433,28 @@ export function SettingsPanel({
           </span>
         </div>
 
+        {/* Cosmetic only, and not mirrored into Tauri's settings.json — see the
+            `highwayTheme` note in AppSettingsSchema. The renderer resolves the id
+            per frame via getState(), so Save repaints on the next frame without
+            remounting the highway. */}
+        <label className="sh-switch-row">
+          <span className="sh-switch-copy">
+            <span className="sh-switch-title">New visual style</span>
+            <span className="sh-switch-subtitle">
+              Off renders the original look. Takes effect as soon as you save.
+            </span>
+          </span>
+          <input
+            className="sh-switch-input"
+            type="checkbox"
+            checked={draft.highwayTheme === "void"}
+            onChange={(e) => set("highwayTheme")(e.target.checked ? "void" : "classic")}
+          />
+          <span className="sh-switch-track" aria-hidden>
+            <span className="sh-switch-thumb" />
+          </span>
+        </label>
+
         <label className="sh-switch-row">
           <span className="sh-switch-copy">
             <span className="sh-switch-title">Start new songs in autoplay</span>

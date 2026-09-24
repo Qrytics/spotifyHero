@@ -221,6 +221,16 @@ export type WindowSettings = z.infer<typeof WindowSettingsSchema>;
 export const MusicSourceSchema = z.enum(["spotify", "server"]);
 export type MusicSource = z.infer<typeof MusicSourceSchema>;
 
+/**
+ * Which note-highway look to render.
+ *
+ * `"classic"` is the look shipped at tag `visuals/classic-2026-09-24`, kept
+ * selectable so the overhaul has a revert path that does not need a git
+ * operation — see `packages/note-highway/src/themes/classic.ts`.
+ */
+export const HighwayThemeSchema = z.enum(["void", "classic"]);
+export type HighwayThemeId = z.infer<typeof HighwayThemeSchema>;
+
 export const AppSettingsSchema = z.object({
   window: WindowSettingsSchema.default({}),
   /**
@@ -252,6 +262,17 @@ export const AppSettingsSchema = z.object({
   playbackTimingOffsetMs: z.number().int().min(-500).max(500).default(0),
   /** Visual-only lane highway shift in ms (positive = notes appear later). */
   visualNoteOffsetMs: z.number().int().min(-250).max(250).default(0),
+  /**
+   * Note-highway look. Deliberately **not** mirrored into Tauri's
+   * `settings.json`: nothing native reads it, and adding it there would mean
+   * touching `AppSettingsPayload` in `commands.rs` and `TauriAppSettingsPayload`
+   * in `game-state` for a purely cosmetic value that `localStorage` already
+   * persists.
+   *
+   * Default flips to `"void"` in step 6, once the new look has been eyeballed on
+   * real hardware. Until then existing installs keep rendering what they render.
+   */
+  highwayTheme: HighwayThemeSchema.default("classic"),
   difficulty: DifficultySchema.default("medium"),
   /** When true, new charts start in autoplay; press play key to switch to manual. */
   autoplay: z.boolean().default(false),
