@@ -106,8 +106,20 @@ export const SongSchema = z.object({
   contentType: z.string().optional(),
   size: z.number().nonnegative().optional(),
   bitRate: z.number().nonnegative().optional(),
-  /** OpenSubsonic tag field. A hint for cross-checking only — real tempo comes from analysis. */
-  bpm: z.number().positive().optional(),
+  /**
+   * OpenSubsonic tag field. A hint for cross-checking only — real tempo comes from
+   * analysis, and `trackFromSong` drops it entirely.
+   *
+   * Navidrome sends `bpm: 0` for files with no BPM tag, which is most of a real
+   * library, so this must not be `.positive()` — that rejected whole albums. `0` is
+   * normalized to `undefined` rather than passed through, because every consumer
+   * reads it as `track.bpm ?? 120` and `0` is not nullish: letting it through would
+   * hand the calibrator a zero-BPM beat grid.
+   */
+  bpm: z
+    .number()
+    .optional()
+    .transform((v) => (v !== undefined && v > 0 ? v : undefined)),
 });
 export type NavidromeSong = z.infer<typeof SongSchema>;
 
@@ -280,9 +292,22 @@ export class NavidromeClient {
     const parsed = schema.safeParse(body);
     if (!parsed.success) {
       if (import.meta.env.DEV) {
-        console.warn(`[spotifyHero] ${endpoint} payload mismatch:`, parsed.error.flatten(), body);
+        console.warn(`[spotifyHero] ${endpoint} payload mismatch:`, parsed.error.issues, body);
       }
-      throw new NavidromeError(`${endpoint} payload did not match the expected shape`, "schema");
+      // Field paths in the message, not just in a console nobody can open in a
+      // 180px overlay: a Subsonic server that returns one unexpected field is
+      // unfixable from "did not match the expected shape". Paths and Zod's own
+      // wording only — never the values, which are library metadata.
+      const issues = parsed.error.issues;
+      const detail = issues
+        .slice(0, 3)
+        .map((i) => `${i.path.join(".") || "(root)"} ${i.message}`)
+        .join("; ");
+      const more = issues.length > 3 ? ` (+${issues.length - 3} more)` : "";
+      throw new NavidromeError(
+        `${endpoint} payload did not match the expected shape — ${detail}${more}`,
+        "schema"
+      );
     }
     return parsed.data;
   }

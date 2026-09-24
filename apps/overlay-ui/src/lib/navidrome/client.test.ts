@@ -205,6 +205,30 @@ describe("browse endpoints", () => {
     expect(songs[0]?.bpm).toBe(91);
   });
 
+  it("accepts bpm: 0 from untagged files and reports it as unknown", async () => {
+    // Navidrome sends 0 for files with no BPM tag. `.positive()` here used to reject
+    // the whole album, and passing 0 through would defeat every `bpm ?? 120` reader.
+    stubFetch(() =>
+      ok({
+        album: {
+          id: "al-2",
+          name: "Minecraft - Volume Alpha",
+          artist: "C418",
+          song: [
+            { id: "so-1", title: "Key", duration: 66, bpm: 0 },
+            { id: "so-2", title: "Door", duration: 61, bpm: 0 },
+            { id: "so-3", title: "Subwoofer Lullaby", duration: 209, bpm: 92 },
+          ],
+        },
+      })
+    );
+    const songs = await client().getAlbumSongs("al-2");
+    expect(songs).toHaveLength(3);
+    expect(songs[0]?.bpm).toBeUndefined();
+    expect(songs[1]?.bpm).toBeUndefined();
+    expect(songs[2]?.bpm).toBe(92);
+  });
+
   it("defaults each search3 bucket to an empty array", async () => {
     stubFetch(() => ok({ searchResult3: { song: [{ id: "so-9", title: "Hey" }] } }));
     const r = await client().search("hey");
