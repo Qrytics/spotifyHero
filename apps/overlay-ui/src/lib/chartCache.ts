@@ -23,6 +23,10 @@ import { ChartSchema, type Chart, type Difficulty } from "@spotifyhero/shared-ty
 // will not split a module that something imports statically. The type import
 // below is erased, so it can address the root.
 import { ONSET_ANALYSIS_VERSION } from "@spotifyhero/onset-analysis/version";
+// Same reasoning, same subpath convention: the build identity of the generator,
+// not `chart.generatorVersion`, which describes *which path* built a chart
+// (`hybrid-ml-*` vs `deterministic-*`) and so cannot answer "is this stale".
+import { CHART_GENERATOR_VERSION } from "@spotifyhero/chart-generator/version";
 import type { OnsetAnalysisResult } from "@spotifyhero/onset-analysis";
 
 const STORAGE_KEY = "spotifyHero_chartCache_v1";
@@ -89,9 +93,14 @@ export function getCachedChart(
 
   // The version check belongs here as well as in `putCachedChart`: a purge only
   // happens on the next write, and the interesting case is the first launch
-  // after an upgrade, where nothing has been written yet.
+  // after an upgrade, where nothing has been written yet. *Both* versions have to
+  // be checked — this used to test only the analyser, so a generator upgrade went
+  // on serving yesterday's charts until some other track happened to be written.
   const persisted = readPersisted().find(
-    (e) => e.key === key && e.analysisVersion === ONSET_ANALYSIS_VERSION
+    (e) =>
+      e.key === key &&
+      e.analysisVersion === ONSET_ANALYSIS_VERSION &&
+      e.generatorVersion === CHART_GENERATOR_VERSION
   );
   if (!persisted) return null;
 
@@ -115,16 +124,16 @@ export function putCachedChart(chart: Chart): void {
   // A generator *or* analyser change invalidates everything stored by the
   // previous pair, so drop mismatched entries instead of letting them age out
   // one by one. Both halves matter: retuning the onset constants changes the
-  // chart without touching `generatorVersion`.
+  // chart without touching the generator, and vice versa.
   const kept = readPersisted().filter(
     (e) =>
       e.key !== key &&
-      e.generatorVersion === chart.generatorVersion &&
+      e.generatorVersion === CHART_GENERATOR_VERSION &&
       e.analysisVersion === ONSET_ANALYSIS_VERSION
   );
   kept.push({
     key,
-    generatorVersion: chart.generatorVersion,
+    generatorVersion: CHART_GENERATOR_VERSION,
     analysisVersion: ONSET_ANALYSIS_VERSION,
     storedAt: Date.now(),
     chart,
@@ -167,6 +176,7 @@ function putMemoryChart(key: string, chart: Chart): void {
  */
 type PersistedEntry = {
   key: string;
+  /** `CHART_GENERATOR_VERSION` at the time the chart was built. */
   generatorVersion: string;
   /** `ONSET_ANALYSIS_VERSION` at the time the chart was built. */
   analysisVersion: string;

@@ -88,7 +88,7 @@ describe("summarizeChart", () => {
     expect(s.sustainCount).toBe(2);
     expect(s.sustainPercent).toBeCloseTo(0.5);
     expect(s.longestSustainMs).toBe(800);
-    expect(s.laneCounts).toEqual([2, 0, 0, 2, 0]);
+    expect(s.laneCounts).toEqual([2, 0, 0, 2]);
     expect(s.minGapMs).toBe(300);
     expect(s.medianGapMs).toBe(500);
     expect(s.notesPerMinute).toBeCloseTo(4);

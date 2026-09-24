@@ -5,6 +5,9 @@ import {
   chordSizeForRhythm,
   densityFilterPerBeat,
 } from "./rhythm.js";
+import { DETERMINISTIC_GENERATOR_VERSION } from "./version.js";
+
+export { CHART_GENERATOR_VERSION, DETERMINISTIC_GENERATOR_VERSION } from "./version.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -305,6 +308,19 @@ function logChartStats(trackId: string, difficulty: Difficulty, notes: readonly 
   );
 }
 
+/**
+ * Smallest usable width for the sustain gap window.
+ *
+ * `holdGapBeatFraction` of a single beat is shorter than `minHoldDurationMs` at any
+ * realistic tempo — 0.72 beat is 329 ms at 131 BPM against medium's 460 ms minimum
+ * hold — so tempo scaling alone pushed the window's ceiling down onto its floor and
+ * `canAssignSustainAtIndex` would then only accept a gap of *exactly* the floor.
+ * Easy/medium/hard were degenerate above ~78/90/106 BPM, i.e. for nearly all music,
+ * which is why real charts came out with about one sustain in them regardless of
+ * `minSustainPercent`. Only expert (degenerate above 240 BPM) ever held notes.
+ */
+const MIN_SUSTAIN_WINDOW_MS = 240;
+
 function sustainGapMaxForBpm(
   bpm: number,
   holdGapMinMs: number,
@@ -312,11 +328,16 @@ function sustainGapMaxForBpm(
   holdGapBeatFraction: number,
   minHoldDurationMs: number
 ): number {
-  const beatScaled = Math.min(
-    holdGapMaxMs,
-    Math.round((60_000 / Math.max(1, bpm)) * holdGapBeatFraction)
-  );
-  return Math.max(holdGapMinMs, minHoldDurationMs, beatScaled);
+  const beatScaled = Math.round((60_000 / Math.max(1, bpm)) * holdGapBeatFraction);
+  // A hold has to fit between the gap floor and this ceiling, so the floor is the
+  // larger of the two lower bounds.
+  const floor = Math.max(holdGapMinMs, minHoldDurationMs);
+  // Only widen when tempo scaling would collapse the window; presets whose beat
+  // scaling already clears the floor (expert) keep their tempo-tracking ceiling.
+  const ceiling = beatScaled > floor ? beatScaled : floor + MIN_SUSTAIN_WINDOW_MS;
+  // `holdGapMaxMs` caps the window, but never back down onto the floor: a degenerate
+  // window is the bug being fixed here, so the floor wins that conflict.
+  return Math.max(floor, Math.min(holdGapMaxMs, ceiling));
 }
 
 function canAssignSustainAtIndex(
@@ -335,7 +356,11 @@ function canAssignSustainAtIndex(
     if (next.lane !== head.lane) continue;
     const gap = next.timeMs - head.timeMs;
     if (gap > sustainGapMaxMs) return null;
-    if (gap < sustainGapMinMs) continue;
+    // `next` is the *nearest* same-lane note, so if it is too close there is no hold
+    // to be had here. Scanning past it (this was `continue`) could return a hold long
+    // enough to swallow it, producing the interior same-lane tap that
+    // docs/sustain-visual-troubleshooting.md chases in the renderer.
+    if (gap < sustainGapMinMs) return null;
     const confidence = Math.min(head.confidence, next.confidence);
     if (confidence < sustainConfidenceMin) return null;
     const durationMs = Math.min(gap, holdMaxDurationMs);
@@ -845,7 +870,7 @@ export function generateDeterministicChart(
     difficulty,
     notes: mergedSustains,
     bpm: Math.round(rhythmCtx.effectiveBpm) || bpm,
-    generatorVersion: "deterministic-1.9",
+    generatorVersion: DETERMINISTIC_GENERATOR_VERSION,
     generatedAt: new Date(),
   };
 }

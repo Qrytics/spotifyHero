@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { ONSET_ANALYSIS_VERSION } from "@spotifyhero/onset-analysis/version";
+import { CHART_GENERATOR_VERSION } from "@spotifyhero/chart-generator/version";
 import type { Chart } from "@spotifyhero/shared-types";
 import {
   clearMemoryChartCache,
@@ -121,12 +122,49 @@ describe("chartCache", () => {
     expect(getCachedChart("nd:abc", "medium")).toBeNull();
   });
 
+  it("stamps the generator version", () => {
+    putCachedChart(chart());
+    expect(rawEntries()[0]?.["generatorVersion"]).toBe(CHART_GENERATOR_VERSION);
+  });
+
+  /**
+   * The bug this guards: the read path checked only `analysisVersion`, so the
+   * first launch after a generator change went on serving charts built by the old
+   * generator — indefinitely, until a write for some other track happened to
+   * purge them. It made every generator change untestable against a warm cache.
+   */
+  it("ignores an entry from another generator version on read", () => {
+    putCachedChart(chart());
+
+    const stale = rawEntries().map((e) => ({ ...e, generatorVersion: "chart-gen-1" }));
+    storage.setItem(STORAGE_KEY, JSON.stringify(stale));
+    clearMemoryChartCache();
+
+    expect(getCachedChart("nd:abc", "medium")).toBeNull();
+  });
+
   it("drops entries from a previous generator version on write", () => {
-    putCachedChart(chart({ trackId: "nd:old", generatorVersion: "hybrid-ml-v0" }));
+    putCachedChart(chart({ trackId: "nd:old" }));
+    const stale = rawEntries().map((e) => ({ ...e, generatorVersion: "chart-gen-1" }));
+    storage.setItem(STORAGE_KEY, JSON.stringify(stale));
+
     putCachedChart(chart({ trackId: "nd:new" }));
 
     const keys = rawEntries().map((e) => e["key"]);
     expect(keys).toEqual(["nd:new|medium"]);
+  });
+
+  /**
+   * Charts from the ML path carry `hybrid-ml-*` in `chart.generatorVersion`. The
+   * cache keys on the package build instead, so those stay cacheable — keying on
+   * the per-chart string would have invalidated every one of them on read.
+   */
+  it("caches a hybrid chart as readily as a deterministic one", () => {
+    putCachedChart(chart({ generatorVersion: "hybrid-ml-v3" }));
+    clearMemoryChartCache();
+
+    const hit = getCachedChart("nd:abc", "medium");
+    expect(hit?.generatorVersion).toBe("hybrid-ml-v3");
   });
 
   it("discards a stored entry that no longer parses", () => {

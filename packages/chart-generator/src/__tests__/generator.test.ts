@@ -9,6 +9,7 @@ import {
   mergeContiguousSustainSeries,
   DIFFICULTY_PARAMS,
 } from "../index.js";
+import { DETERMINISTIC_GENERATOR_VERSION } from "../version.js";
 import { buildRhythmContext, inferBeatsPerMeasure } from "../rhythm.js";
 
 describe("rhythm context", () => {
@@ -285,12 +286,12 @@ describe("generateDeterministicChart", () => {
     }
   });
 
-  it("uses deterministic-1.9 generator version", () => {
+  it("stamps the deterministic generator version", () => {
     const beats = makeBeatEvents(5, 500);
     const chart = generateDeterministicChart("v", beats, 120, {
       difficulty: "medium",
     });
-    expect(chart.generatorVersion).toBe("deterministic-1.9");
+    expect(chart.generatorVersion).toBe(DETERMINISTIC_GENERATOR_VERSION);
   });
 
   it("confidence-first filter with mixed strengths yields fewer easy notes than expert", () => {
@@ -492,7 +493,7 @@ describe("HybridChartGenerator", () => {
     const gen = new HybridChartGenerator(new PassthroughMLRefiner(), 0.65);
     const beats = makeBeatEvents(20, 500);
     const chart = await gen.generate("t", beats, 120, { difficulty: "medium" });
-    expect(chart.generatorVersion).toBe("deterministic-1.9");
+    expect(chart.generatorVersion).toBe(DETERMINISTIC_GENERATOR_VERSION);
   });
 
   it("returns a valid chart shape", async () => {
@@ -505,4 +506,64 @@ describe("HybridChartGenerator", () => {
     expect(Array.isArray(chart.notes)).toBe(true);
     expect(chart.bpm).toBe(100);
   });
+});
+
+// ---------------------------------------------------------------------------
+// Sustain gap window
+//
+// `sustainGapMaxForBpm` used to clamp the window's ceiling up to its floor, which
+// made the eligible gap exactly one value: only a same-lane successor landing on
+// the floor to the millisecond could hold. Easy/medium/hard were degenerate above
+// ~78/90/106 BPM, so real charts contained about one sustain each however high
+// `minSustainPercent` was set. 131.5 BPM is a measured value from a real track.
+// ---------------------------------------------------------------------------
+
+const DIFFICULTIES = ["easy", "medium", "hard", "expert"] as const;
+
+describe("sustain assignment at realistic tempos", () => {
+  it.each(DIFFICULTIES)("lands %s inside its target sustain band", (difficulty) => {
+    const preset = DIFFICULTY_PARAMS[difficulty];
+    const chart = generateDeterministicChart("t", makeBeatEvents(240, 200), 131.5, {
+      difficulty,
+    });
+    const { holds } = countTapHold(chart.notes);
+    expect(chart.notes.length).toBeGreaterThan(0);
+    const percent = holds / chart.notes.length;
+    expect(percent).toBeGreaterThanOrEqual(preset.minSustainPercent);
+    expect(percent).toBeLessThanOrEqual(preset.maxSustainPercent);
+  });
+
+  // Both spacings are needed. `canAssignSustainAtIndex` only reaches the too-close
+  // branch when a same-lane gap falls under the difficulty's `holdGapMinMs`, and a
+  // 200 ms grid never does that for expert (170 ms floor) — 120 ms does.
+  const GRID_SPACINGS_MS = [200, 120] as const;
+  const OVERLAP_CASES = DIFFICULTIES.flatMap((difficulty) =>
+    GRID_SPACINGS_MS.map((spacingMs) => ({ difficulty, spacingMs }))
+  );
+
+  it.each(OVERLAP_CASES)(
+    "never lets a $difficulty hold reach its next same-lane note on a $spacingMs ms grid",
+    ({ difficulty, spacingMs }) => {
+      const chart = generateDeterministicChart(
+        "t",
+        makeBeatEvents(240, spacingMs),
+        131.5,
+        { difficulty }
+      );
+      const notes = chart.notes;
+      expect(notes.length).toBeGreaterThan(0);
+      for (let i = 0; i < notes.length; i++) {
+        const head = notes[i]!;
+        if (head.durationMs <= 0) continue;
+        for (let j = i + 1; j < notes.length; j++) {
+          const next = notes[j]!;
+          if (next.lane !== head.lane) continue;
+          // The tail may touch the next head but must not pass it, or the renderer
+          // gets an interior same-lane tap (docs/sustain-visual-troubleshooting.md).
+          expect(next.timeMs).toBeGreaterThanOrEqual(head.timeMs + head.durationMs);
+          break;
+        }
+      }
+    }
+  );
 });

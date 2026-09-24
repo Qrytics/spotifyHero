@@ -144,7 +144,10 @@ export function summarizeConfidence(
 
 export function summarizeChart(chart: Chart, durationMs: number | null): ChartSummary {
   const notes: readonly Note[] = chart.notes;
-  const laneCounts = [0, 0, 0, 0, 0];
+  // 4 lanes, matching LANE_COUNTS in chart-generator and LANE_COUNT in note-highway
+  // (both module-private, hence the repetition). This was a 5-slot array, so every
+  // report carried a trailing 0 that looked like a starved lane.
+  const laneCounts = [0, 0, 0, 0];
   const gaps: number[] = [];
   let sustainCount = 0;
   let longestSustainMs = 0;
