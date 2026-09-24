@@ -15,7 +15,7 @@ apps/desktop/src-tauri/target/
 .env
 .env.local
 .env.*.local
-scripts/itch.env
+scripts/release/itch.env
 
 # Local tooling (e.g. downloaded itch butler for BUTLER_PATH)
 .tools/
