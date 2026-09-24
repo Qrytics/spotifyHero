@@ -17,7 +17,6 @@ export function PlayBottomBar({
   onOpenLeaderboard,
   leaderboardDisabled = false,
 }: PlayBottomBarProps): React.ReactElement {
-  const phase = useGameStore((s) => s.phase);
   const lastEvent = useGameStore((s) => s.lastScoreEvent);
   const settings = useGameStore((s) => s.settings);
   /** `undefined` means Spotify — see `PlaybackStateSchema.source`. */
@@ -28,22 +27,6 @@ export function PlayBottomBar({
     return raw.length === 0 ? "?" : raw.toLowerCase();
   });
   const lanesTitle = settings.laneKeys.map((k) => formatKeybindLabel(k)).join(" · ");
-
-  const modeLabel =
-    phase === "autoplay"
-      ? "AUTO"
-      : phase === "manual"
-        ? "MANUAL"
-        : phase === "paused"
-          ? "PAUSED"
-          : "";
-
-  const modeColor =
-    phase === "manual"
-      ? "#1db954"
-      : phase === "paused"
-        ? "#ff9800"
-        : "#889";
 
   const judgementStyle = (j: string): React.CSSProperties => {
     const base: React.CSSProperties = {
@@ -88,21 +71,11 @@ export function PlayBottomBar({
         overflow: "hidden",
       }}
     >
-      {modeLabel ? (
-        <span
-          style={{
-            fontSize: "8px",
-            fontWeight: 700,
-            color: modeColor,
-            letterSpacing: "0.04em",
-            whiteSpace: "nowrap",
-            flex: "0 0 auto",
-          }}
-        >
-          {modeLabel}
-        </span>
-      ) : null}
-
+      {/*
+        No mode chip here. AUTO / MANUAL / PAUSED pulse over the middle of the
+        highway instead (`ScreenPulse`) — mode matters at the moment it changes,
+        and this row has no width to spare.
+      */}
       {serverMode && <ServerTransportControls />}
 
       {/*

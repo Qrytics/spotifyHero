@@ -104,6 +104,66 @@ function playMilestoneChime(): void {
   }
 }
 
+/**
+ * One drumstick click: a short noise burst through a tight bandpass.
+ *
+ * Noise, not an oscillator — a stick hit is a transient with no pitch, and a
+ * beep at 2 kHz sounds like a UI error instead of a count-in. The buffer is
+ * built per click, which is fine: four clicks per song, never per frame.
+ */
+function scheduleStickClick(
+  ctx: AudioContext,
+  atTime: number,
+  centreHz: number,
+  gainPeak: number
+): void {
+  const durationS = 0.035;
+  const frames = Math.max(1, Math.floor(ctx.sampleRate * durationS));
+  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < frames; i++) {
+    // Steep decay: all the energy in the first few ms is what reads as "wood".
+    data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / frames, 3.2);
+  }
+
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  const band = ctx.createBiquadFilter();
+  band.type = "bandpass";
+  band.frequency.value = centreHz;
+  band.Q.value = 1.4;
+  const gain = ctx.createGain();
+  gain.gain.value = gainPeak;
+
+  src.connect(band);
+  band.connect(gain);
+  gain.connect(masterGain ?? ctx.destination);
+  // A time already in the past starts immediately, which is the right recovery.
+  src.start(Math.max(atTime, ctx.currentTime));
+}
+
+/**
+ * Count-in clicks leading up to `startsAtCtxTime` — `beats` of them before the
+ * music plus a brighter, louder one landing exactly on the downbeat ("GO").
+ *
+ * Scheduled on the `AudioContext`, against the same time base the music node was
+ * scheduled on, so the ticks cannot drift from the first note no matter what the
+ * main thread is doing. Called by `lib/countIn.ts`.
+ */
+export function scheduleCountInClicks(
+  startsAtCtxTime: number,
+  beats: number,
+  beatMs: number
+): void {
+  const ctx = ensureAudioContext();
+  if (!ctx) return;
+  const beatS = beatMs / 1000;
+  for (let i = beats; i >= 1; i--) {
+    scheduleStickClick(ctx, startsAtCtxTime - i * beatS, 1900, 0.5);
+  }
+  scheduleStickClick(ctx, startsAtCtxTime, 3000, 0.75);
+}
+
 export function primeHitSound(): void {
   const ctx = ensureAudioContext();
   if (!ctx) return;

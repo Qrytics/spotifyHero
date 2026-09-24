@@ -169,6 +169,10 @@ const Search3ResponseSchema = z.object({
     .default({}),
 });
 
+const RandomSongsResponseSchema = z.object({
+  randomSongs: z.object({ song: z.array(SongSchema).default([]) }).default({}),
+});
+
 const PlaylistsResponseSchema = z.object({
   playlists: z
     .object({ playlist: z.array(PlaylistSchema).default([]) })
@@ -373,6 +377,21 @@ export class NavidromeClient {
     );
     const r = data.searchResult3;
     return { artists: r.artist, albums: r.album, songs: r.song };
+  }
+
+  /**
+   * A fresh random deal of songs. Navidrome caps `size` at 500 and re-rolls on
+   * every call, so the caller gets a different set each time with no cursor to
+   * keep. Over-fetch if you intend to filter (e.g. by `isTrackTooLong`).
+   */
+  async getRandomSongs(size: number, signal?: AbortSignal): Promise<NavidromeSong[]> {
+    const data = await this.getJson(
+      "getRandomSongs",
+      { size },
+      RandomSongsResponseSchema,
+      signal
+    );
+    return data.randomSongs.song;
   }
 
   async getPlaylists(signal?: AbortSignal): Promise<NavidromePlaylist[]> {

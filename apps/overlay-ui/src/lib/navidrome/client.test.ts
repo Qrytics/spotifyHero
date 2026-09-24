@@ -245,6 +245,22 @@ describe("browse endpoints", () => {
     expect(u.searchParams.get("size")).toBe("100");
     expect(u.searchParams.get("offset")).toBe("200");
   });
+
+  it("asks getRandomSongs for the requested size", async () => {
+    const spy = stubFetch(() =>
+      ok({ randomSongs: { song: [{ id: "so-1", title: "One" }] } })
+    );
+    const songs = await client().getRandomSongs(15);
+    const u = new URL(String(spy.mock.calls[0]?.[0]));
+    expect(u.pathname).toBe("/rest/getRandomSongs");
+    expect(u.searchParams.get("size")).toBe("15");
+    expect(songs.map((s) => s.id)).toEqual(["so-1"]);
+  });
+
+  it("returns an empty deal rather than throwing when randomSongs is omitted", async () => {
+    stubFetch(() => ok({}));
+    await expect(client().getRandomSongs(10)).resolves.toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------

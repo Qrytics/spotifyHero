@@ -12,11 +12,16 @@
  * the word "password" appearing in localStorage; an attacker with the blob has
  * full access to the music server account either way.
  *
+ * And with "Remember password" on, the login hint below stores the plaintext
+ * password too, so it can be typed back into the form. Same blast radius, said
+ * out loud: anyone who can read this origin's localStorage already had the
+ * account via the token.
+ *
  * This is no worse than the status quo — Spotify access/refresh tokens already
  * sit unencrypted in Tauri's `settings.json`.
  *
- * TODO(keychain): move this to the OS keychain behind a Tauri command
- * (`keyring` crate) and keep only `{serverUrl, username}` here.
+ * TODO(keychain): move **both records** to the OS keychain behind a Tauri
+ * command (`keyring` crate) and keep only `{serverUrl, username}` here.
  * Mitigation available today: create a dedicated Navidrome user for the game
  * so this credential is independently revocable.
  */
@@ -24,6 +29,7 @@ import { z } from "zod";
 import { md5 } from "./md5.js";
 
 const STORAGE_KEY = "spotifyHero_navidrome_v1";
+const LOGIN_HINT_KEY = "spotifyHero_navidrome_login_v1";
 
 export const NavidromeCredentialsSchema = z.object({
   /** Origin + optional base path, no trailing slash, no `/rest` suffix. */
@@ -106,6 +112,76 @@ export function saveCredentials(creds: NavidromeCredentials): void {
 export function clearCredentials(): void {
   try {
     localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Login hint — what the form types back in
+// ---------------------------------------------------------------------------
+
+/**
+ * The last successful login, kept **separately from the credential above** so it
+ * survives `clearCredentials()`. That is the whole point: a rejected password
+ * drops the credential, and without this the user would have to retype the
+ * server address and username to fix a one-character typo.
+ */
+export const NavidromeLoginHintSchema = z.object({
+  /** As the user typed it, before `normalizeServerUrl` — it goes back in the field. */
+  serverUrl: z.string().min(1),
+  username: z.string().min(1),
+  /** Present only while "Remember password" is on. See the SECURITY note above. */
+  password: z.string().optional(),
+  /**
+   * The checkbox state, tracked separately from `password` because sign-out
+   * strips the password but must not silently uncheck the box.
+   */
+  rememberPassword: z.boolean().default(true),
+});
+export type NavidromeLoginHint = z.infer<typeof NavidromeLoginHintSchema>;
+
+export function loadLoginHint(): NavidromeLoginHint | null {
+  let raw: string | null;
+  try {
+    raw = localStorage.getItem(LOGIN_HINT_KEY);
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const parsed = NavidromeLoginHintSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLoginHint(hint: NavidromeLoginHint): void {
+  try {
+    localStorage.setItem(LOGIN_HINT_KEY, JSON.stringify(hint));
+  } catch {
+    // Non-fatal: the session keeps working, the form is just empty next time.
+  }
+}
+
+/**
+ * Sign-out: forget the password, keep the server, username, and the checkbox
+ * preference (so signing back in still offers to remember it).
+ */
+export function clearLoginHintPassword(): void {
+  const hint = loadLoginHint();
+  if (!hint) return;
+  saveLoginHint({
+    serverUrl: hint.serverUrl,
+    username: hint.username,
+    rememberPassword: hint.rememberPassword,
+  });
+}
+
+export function clearLoginHint(): void {
+  try {
+    localStorage.removeItem(LOGIN_HINT_KEY);
   } catch {
     /* ignore */
   }

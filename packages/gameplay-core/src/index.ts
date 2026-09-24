@@ -582,3 +582,4 @@ export class NoteWindowManager {
 }
 
 export * from "./chartTiming.js";
+export * from "./scrollSpeed.js";

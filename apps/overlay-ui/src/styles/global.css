@@ -308,6 +308,80 @@ html, body, #root {
   }
 }
 
+/* Center-screen pulse (play mode + volume) — see components/ScreenPulse.tsx */
+.sh-pulse-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.sh-pulse {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 92%;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1.1;
+  text-align: center;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.8);
+  animation: sh-pulse 900ms ease-out forwards;
+}
+
+.sh-pulse-bar {
+  width: 96px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+
+.sh-pulse-bar > div {
+  height: 100%;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+@keyframes sh-pulse {
+  0% {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  18% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.14);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sh-pulse {
+    animation: sh-pulse-fade 900ms ease-out forwards;
+  }
+
+  @keyframes sh-pulse-fade {
+    0%,
+    55% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+}
+
 .leaderboard-backdrop {
   position: fixed;
   inset: 0;
@@ -461,14 +535,18 @@ html, body, #root {
   text-overflow: ellipsis;
 }
 
+/* Four of these share 164px at the minimum window width. `nowrap` + `min-width:0`
+   keep the strip one line high instead of letting a label wrap. */
 .sh-lib-tab {
   flex: 1;
+  min-width: 0;
   padding: 3px 0;
   border: none;
   border-bottom: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
   font-size: 8.5px;
+  white-space: nowrap;
   cursor: pointer;
 }
 

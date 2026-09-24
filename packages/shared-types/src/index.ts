@@ -236,8 +236,15 @@ export const AppSettingsSchema = z.object({
    * Spotify setting the moment a local track plays.
    */
   serverPlaybackTimingOffsetMs: z.number().int().min(-500).max(500).default(0),
-  /** >1 = faster scrolling (shorter lookahead window). ~0.45–5. */
-  noteScrollSpeed: z.number().min(0.45).max(5).default(1),
+  /**
+   * >1 = faster scrolling (shorter lookahead window). ~0.45–5.
+   *
+   * The default is `DIFFICULTY_SCROLL_SPEED.medium` (`gameplay-core`), hardcoded
+   * because that map cannot be imported here — it depends on this package, not
+   * the other way round. Keep the two in step; `updateSettings` re-applies the
+   * map on every difficulty change anyway, so this only governs a first run.
+   */
+  noteScrollSpeed: z.number().min(0.45).max(5).default(1.3),
   /**
    * Added to Spotify playhead time for hits & highway (ms). Negative = chart earlier vs reported position.
    * Set via timing calibrator or manually.

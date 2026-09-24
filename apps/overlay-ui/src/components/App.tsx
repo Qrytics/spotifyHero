@@ -3,6 +3,7 @@ import { useGameStore } from "../store/gameStore.js";
 import { NoteHighway } from "./NoteHighway.js";
 import { HUD } from "./HUD.js";
 import { PlayBottomBar } from "./PlayBottomBar.js";
+import { ScreenPulse } from "./ScreenPulse.js";
 import { ResultsScreen } from "./ResultsScreen.js";
 import { IdleScreen } from "./IdleScreen.js";
 import { useSpotifySync } from "../hooks/useSpotifySync.js";
@@ -27,11 +28,11 @@ import {
   clearPreparedAudio,
   setPreparedAudio,
 } from "../lib/analysis/preparedAudio.js";
+import { recordPlayed } from "../lib/navidrome/playHistory.js";
 
 export function App(): React.ReactElement {
   const phase = useGameStore((s) => s.phase);
   const trackLifecycle = useGameStore((s) => s.trackLifecycle);
-  const countdownUntilMs = useGameStore((s) => s.countdownUntilMs);
   const chart = useGameStore((s) => s.chart);
   const playback = useGameStore((s) => s.playback);
   const session = useGameStore((s) => s.session);
@@ -40,7 +41,6 @@ export function App(): React.ReactElement {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [calibratorOpen, setCalibratorOpen] = useState(false);
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
-  const [countdownNowMs, setCountdownNowMs] = useState(() => Date.now());
   /** Download / decode failure for a music-server track, shown above the library. */
   const [serverError, setServerError] = useState<string | null>(null);
   // `analysisStage`/`analysisProgress` are subscribed inside
@@ -75,18 +75,6 @@ export function App(): React.ReactElement {
     })();
   }, []);
 
-  useEffect(() => {
-    if (trackLifecycle !== "countdown") return;
-    const timer = window.setInterval(() => {
-      setCountdownNowMs(Date.now());
-    }, 80);
-    return () => window.clearInterval(timer);
-  }, [trackLifecycle]);
-
-  const countdownStep =
-    trackLifecycle === "countdown" && countdownUntilMs !== null
-      ? Math.max(1, Math.ceil((countdownUntilMs - countdownNowMs) / 1000))
-      : null;
   const activeTrackId = chart?.trackId ?? playback?.trackId ?? "";
   const leaderboardEligibleForRanking = session ? !usedAutoplayThisRound : true;
 
@@ -113,8 +101,19 @@ export function App(): React.ReactElement {
           }}
         >
           <HUD />
-          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          {/* `position: relative` so the pulse overlay centers on the highway
+              rather than on the whole window (chrome + HUD + bottom bar). */}
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              position: "relative",
+            }}
+          >
             <NoteHighway />
+            <ScreenPulse />
           </div>
           <PlayBottomBar
             onOpenSettings={() => setSettingsOpen(true)}
@@ -127,7 +126,8 @@ export function App(): React.ReactElement {
       {(trackLifecycle === "loading" || trackLifecycle === "generating") && (
         <TrackLoadingIndicator lifecycle={trackLifecycle} />
       )}
-      {/* Countdown overlay intentionally disabled: chart generation is fast enough now. */}
+      {/* No countdown overlay here: the 3·2·1·GO! of `lib/countIn.ts` pulses over
+          the highway (`ScreenPulse`), where the notes it is counting in are. */}
 
       {phase === "results" && <ResultsScreen />}
       {phase === "idle" && (
@@ -184,6 +184,15 @@ export function App(): React.ReactElement {
                     })
                     .then(({ track, buffer }) => {
                       setPreparedAudio(track.id, buffer);
+                      // Resolved means the bytes arrived and decoded, so the
+                      // game is about to play this — the same moment
+                      // `NavidromePlaybackSource` scrobbles it. The Recent tab
+                      // reads this list; it must never be why a song fails.
+                      try {
+                        recordPlayed(client.serverUrl, song);
+                      } catch {
+                        /* history is a convenience, never load-bearing */
+                      }
                     })
                     .catch((e: unknown) => {
                       setServerError(

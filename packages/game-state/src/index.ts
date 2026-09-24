@@ -9,6 +9,7 @@ import type {
 } from "@spotifyhero/shared-types";
 import { AppSettingsSchema } from "@spotifyhero/shared-types";
 import type { PlayMode } from "@spotifyhero/gameplay-core";
+import { DIFFICULTY_SCROLL_SPEED } from "@spotifyhero/gameplay-core";
 
 // ---------------------------------------------------------------------------
 // Injectable side effects
@@ -447,16 +448,34 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   updateSettings: (patch) =>
     set((state) => {
+      const difficultyChanged =
+        patch.difficulty !== undefined &&
+        patch.difficulty !== state.settings.difficulty;
+
+      /**
+       * Raising difficulty raises scroll speed with it — a denser chart at the
+       * same speed is just cramped. Skipped when the caller sets a speed in the
+       * same patch (the slider does), so this never fights an explicit value.
+       */
+      const speedForDifficulty =
+        difficultyChanged &&
+        patch.difficulty !== undefined &&
+        patch.noteScrollSpeed === undefined
+          ? DIFFICULTY_SCROLL_SPEED[patch.difficulty]
+          : null;
+
       const settings = finalizeSupabaseUrlInSettings(
         AppSettingsSchema.parse({
           ...state.settings,
           ...patch,
+          ...(speedForDifficulty !== null
+            ? { noteScrollSpeed: speedForDifficulty }
+            : {}),
         })
       );
 
       const difficultyRegen =
-        patch.difficulty !== undefined &&
-        patch.difficulty !== state.settings.difficulty &&
+        difficultyChanged &&
         state.chart !== null &&
         state.playback?.trackId != null &&
         state.chart.trackId === state.playback.trackId &&

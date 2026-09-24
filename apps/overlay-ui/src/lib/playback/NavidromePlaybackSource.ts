@@ -245,6 +245,41 @@ export class NavidromePlaybackSource implements PlaybackSource {
     void this.scrobble();
   }
 
+  /**
+   * True when a fresh `play()` would start this track from the top — i.e. the
+   * track is prepared and has never been heard, so it is worth counting the
+   * player in. False mid-song, which is what keeps a resume from pause instant.
+   *
+   * `<= 0` rather than `=== 0`: pausing *during* a count-in freezes a negative
+   * position, and resuming from there should count in again.
+   */
+  canCountIn(): boolean {
+    return this.buffer !== null && !this.playing && this.positionMs() <= 0;
+  }
+
+  /**
+   * Starts the track from the top, but schedules the first sample `countInMs`
+   * from now instead of ~immediately, and returns the `AudioContext` time it
+   * will land on (for scheduling count-in clicks against the same clock).
+   *
+   * The clock is anchored to that future start, so `positionMs()` counts *up to*
+   * zero across the count-in — which is the whole point. A playhead that is
+   * genuinely negative means the highway scrolls the opening notes in from the
+   * top edge instead of popping them in already on top of the receptors, and a
+   * note at `timeMs: 0` still arrives exactly when sample 0 is audible. See
+   * `lib/countIn.ts` for the clicks and the on-screen digits.
+   */
+  async playWithCountIn(
+    countInMs: number
+  ): Promise<{ startsAtCtxTime: number } | null> {
+    if (!this.buffer || this.playing) return null;
+    await resumeAudioContext();
+    this.startNodeAt(0, Math.max(0, countInMs) / 1000);
+    this.emitState();
+    void this.scrobble();
+    return { startsAtCtxTime: this.startedAtCtxTime };
+  }
+
   async pause(): Promise<void> {
     if (!this.playing) return;
     this.pausedAtMs = this.positionMs();
@@ -339,8 +374,16 @@ export class NavidromePlaybackSource implements PlaybackSource {
     node.disconnect();
   }
 
-  /** Starts a fresh node at `offsetMs` and re-anchors the clock to it. */
-  private startNodeAt(offsetMs: number): void {
+  /**
+   * Starts a fresh node at `offsetMs` and re-anchors the clock to it.
+   *
+   * `leadS` is how far ahead of `ctx.currentTime` the node is scheduled: a couple
+   * of ms normally (see {@link START_SCHEDULE_LEAD_S}), or a whole count-in when
+   * `playWithCountIn` asks for one. Either way the anchor is the scheduled time,
+   * not "now", so the clock stays correct — it simply reads negative until the
+   * node begins.
+   */
+  private startNodeAt(offsetMs: number, leadS = START_SCHEDULE_LEAD_S): void {
     const ctx = getAudioContext();
     if (!ctx || !this.buffer) return;
 
@@ -354,7 +397,7 @@ export class NavidromePlaybackSource implements PlaybackSource {
     this.gain.gain.value = this.volumeUnit01;
 
     const offset = clamp(offsetMs, 0, this.durationMs());
-    const when = ctx.currentTime + START_SCHEDULE_LEAD_S;
+    const when = ctx.currentTime + leadS;
     const seq = this.nodeSeq;
     this.ctx = ctx;
     this.outputLatencyMs = audioOutputLatencyMs();

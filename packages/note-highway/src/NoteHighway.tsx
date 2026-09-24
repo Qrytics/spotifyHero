@@ -513,13 +513,24 @@ const NoteHighwayInner = (): React.ReactElement => {
       return off;
     };
 
-    const resizeIfNeeded = (): { dpr: number; lw: number; lh: number } | null => {
+    /**
+     * `resized` is true only on the frame that actually changed the backing
+     * store — the frozen branch below needs it to know when a repaint is owed.
+     */
+    const resizeIfNeeded = (): {
+      dpr: number;
+      lw: number;
+      lh: number;
+      resized: boolean;
+    } | null => {
       const cssW = Math.max(2, wrap.clientWidth);
       const cssH = Math.max(2, wrap.clientHeight);
       const { cssW: ow, cssH: oh } = dimsRef.current;
       const dpr = Math.min(2, window.devicePixelRatio || 1);
 
+      let resized = false;
       if (cssW !== ow || cssH !== oh) {
+        resized = true;
         dimsRef.current = { cssW, cssH };
         canvas.width = Math.floor(cssW * dpr);
         canvas.height = Math.floor(cssH * dpr);
@@ -530,34 +541,57 @@ const NoteHighwayInner = (): React.ReactElement => {
 
       const lw = canvas.width / dpr;
       const lh = canvas.height / dpr;
-      return { dpr, lw, lh };
+      return { dpr, lw, lh, resized };
+    };
+
+    /** Lane backdrop + receptors only, at the current size. Allocation-free. */
+    const paintStaticLayerOnly = (
+      dpr: number,
+      lw: number,
+      lh: number,
+      trackId: string
+    ): void => {
+      const off = rebuildStatic(lw, lh, canvas.width, canvas.height, dpr, trackId);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.fillStyle = "#06060c";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(off, 0, 0);
     };
 
     const loop = (): void => {
       rafRef.current = requestAnimationFrame(loop);
 
       const state = useGameStore.getState();
-      if (
+      const c = state.chart;
+      const frozen =
         state.trackLifecycle === "ending" ||
         state.trackLifecycle === "loading" ||
-        state.trackLifecycle === "generating"
-      ) {
-        if (
-          visibility.activeSustains.size > 0 ||
-          visibility.goneTap.size > 0 ||
-          visibility.missSlide.size > 0
-        ) {
-        }
+        state.trackLifecycle === "generating" ||
+        !PLAYABLE_PHASES.has(state.phase) ||
+        !c;
+
+      // Resized *before* the frozen check, not after. Pausing freezes this loop,
+      // and a canvas left at its old pixel size while the window grows leaves the
+      // new space unpainted — the black void that used to appear when you paused
+      // and then resized, filling in only on resume.
+      const dim = resizeIfNeeded();
+
+      if (frozen) {
         visibility.goneTap.clear();
         visibility.activeSustains.clear();
         visibility.missSlide.clear();
+        // Static layer only. The playhead is frozen too, and while paused
+        // `shouldHideNotesForQuietPlayback` paints no notes anyway, so this is
+        // the same picture a full repaint would produce — minus the risk of
+        // re-showing notes whose visibility state was just cleared.
+        if (dim?.resized && dim.lw >= 2 && dim.lh >= 2) {
+          paintStaticLayerOnly(dim.dpr, dim.lw, dim.lh, c?.trackId ?? "");
+        }
         return;
       }
-      if (!PLAYABLE_PHASES.has(state.phase)) return;
-      const c = state.chart;
+      // Already implied by `frozen`; the compiler cannot see that through a
+      // boolean, so restate it rather than assert below.
       if (!c) return;
-
-      const dim = resizeIfNeeded();
       if (!dim || dim.lw < 2 || dim.lh < 2) return;
 
       const { dpr, lw, lh } = dim;

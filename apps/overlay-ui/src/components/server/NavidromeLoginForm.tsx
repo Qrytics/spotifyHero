@@ -1,9 +1,17 @@
 import React, { useRef, useState } from "react";
+import type { NavidromeLoginHint } from "../../lib/navidrome/credentials.js";
 
 type Props = {
   busy: boolean;
   error: string | null;
-  onSubmit: (serverUrl: string, username: string, password: string) => void;
+  /** Last successful login, used to seed the fields. */
+  saved: NavidromeLoginHint | null;
+  onSubmit: (
+    serverUrl: string,
+    username: string,
+    password: string,
+    rememberPassword: boolean
+  ) => void;
   /** Back to the source picker. */
   onBack: () => void;
 };
@@ -11,19 +19,23 @@ type Props = {
 /**
  * In-game Navidrome / Subsonic login.
  *
- * The password never leaves this component: `useNavidromeAuth` immediately
- * derives `md5(password + salt)` and only that is persisted. See the security
- * note in `lib/navidrome/credentials.ts` for what that does and does not buy.
+ * `useNavidromeAuth` immediately derives `md5(password + salt)` and persists
+ * that; the plaintext is persisted as well when "Remember password" is on, so
+ * the fields can be typed back in. See the security note in
+ * `lib/navidrome/credentials.ts` for what that does and does not buy.
  */
 export function NavidromeLoginForm({
   busy,
   error,
+  saved,
   onSubmit,
   onBack,
 }: Props): React.ReactElement {
-  const [serverUrl, setServerUrl] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const [serverUrl, setServerUrl] = useState(saved?.serverUrl ?? "");
+  const [username, setUsername] = useState(saved?.username ?? "");
+  const [password, setPassword] = useState(saved?.password ?? "");
+  // On by default; otherwise whatever the box was set to last time.
+  const [remember, setRemember] = useState(saved?.rememberPassword ?? true);
   const [missing, setMissing] = useState<string | null>(null);
 
   // WKWebView keychain autofill can write an input's value without firing React's
@@ -60,9 +72,12 @@ export function NavidromeLoginForm({
         }
 
         setMissing(null);
-        onSubmit(server, user, pass);
-        // Drop the plaintext from component state as soon as it is handed off.
-        setPassword("");
+        onSubmit(server, user, pass, remember);
+        // Drop the plaintext from component state as soon as it is handed off —
+        // but only when we are not keeping it anyway. This form stays mounted
+        // through a rejected login, and blanking the field there would mean
+        // retyping the password to fix a one-character typo.
+        if (!remember) setPassword("");
       }}
       style={{
         flex: 1,
@@ -98,7 +113,8 @@ export function NavidromeLoginForm({
           style={{ fontSize: "8px", color: "var(--text-muted)", lineHeight: 1.35 }}
         >
           Navidrome / Subsonic. Use a dedicated account if you can — the
-          credential is stored on this machine.
+          credential, and the password if you tick the box, are stored
+          unencrypted on this machine.
         </div>
 
         <Field label="Server">
@@ -135,6 +151,25 @@ export function NavidromeLoginForm({
             onChange={(e) => setPassword(e.target.value)}
           />
         </Field>
+
+        <label
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "4px",
+            fontSize: "8px",
+            color: "var(--text-muted)",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+            style={{ width: 10, height: 10, margin: 0, accentColor: "var(--accent-library)" }}
+          />
+          Remember password
+        </label>
 
         {missing && !error && (
           <div style={{ fontSize: "8px", color: "#ffc46b", lineHeight: 1.35 }}>

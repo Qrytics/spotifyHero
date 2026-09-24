@@ -58,9 +58,11 @@ and the Subsonic doc example
   `useChartGeneration` returns when `playback?.source === "server"` (so `demoBeatEvents` and its
   2000 ms bias are untouched).
 - `hooks/useNavidromeAuth.ts` — session in local React state, not the store. Auth failure clears
-  the credential; network failure keeps it so Retry works offline→online.
+  the credential; network failure keeps it so Retry works offline→online. A second localStorage
+  record (`spotifyHero_navidrome_login_v1`) survives both, so the form reopens filled in — see
+  "Added after Phase 6" below.
 - `components/server/{SourcePicker,NavidromeLoginForm,ServerLibraryScreen}.tsx` — browse /
-  search / recent, drill-down in local state, sized for the 180 px window.
+  search / recent / random, drill-down in local state, sized for the 180 px window.
 - `App.tsx` `phase === "idle"` now branches: `null` → picker, `"spotify"` → `IdleScreen`,
   `"server"` → library. No new `GamePhase`.
 - `SettingsPanel.tsx` — music-source segmented control; Spotify Client ID hidden in server mode;
@@ -275,7 +277,60 @@ Nothing in the plan's phases. `pnpm build`, `type-check` and `test` are green fo
 
 What is left is the real-hardware verification below, plus two deliberate deferrals:
 - per-mode hit windows (`TODO(hit-windows)` in `useGameLoop.ts`);
-- the Navidrome credential in the keychain rather than localStorage (`TODO(keychain)`).
+- the Navidrome credential **and the remembered password** in the keychain rather than
+  localStorage (`TODO(keychain)`).
+
+**Added after Phase 6 — remembered login, real Recent, Random tab.** Three follow-ups from
+playing it for real:
+- `lib/navidrome/credentials.ts` grew a *login hint* (`spotifyHero_navidrome_login_v1`:
+  `{serverUrl, username, password?, rememberPassword}`), deliberately a second record so it
+  survives the `clearCredentials()` that an auth failure triggers — the old behaviour made a
+  one-character password typo cost you the server address too. `serverUrl` is stored **as typed**,
+  pre-`normalizeServerUrl`, because it goes back into the field. `rememberPassword` is tracked
+  apart from `password` so sign-out can strip the password without silently unticking the box.
+  `NavidromeLoginForm` seeds its fields from it and keeps its DOM-ref-authoritative submit
+  (WKWebView autofill). The header SECURITY note now says plainly that the plaintext is stored
+  when the box is ticked.
+  **First version of this did not work, and why:** `useNavidromeAuth.login` wrote the hint only
+  after `verify()` succeeded, and never updated the in-memory `savedLogin` the form seeds from.
+  A failed attempt — which is the only kind you have before the login works — therefore
+  remembered nothing, and a wrong *address* fails as a network error, which swapped the form for
+  the Retry screen and so destroyed the component state holding the typed password too. The hint
+  is now written (and `savedLogin` set) *before* `deriveCredentials`, so the box means "remember
+  what I typed", and `verify(creds, restorable)` only shows the Retry screen for a credential
+  that came out of storage; a fresh submission that cannot reach the server stays on the form
+  with the message inline.
+- `lib/navidrome/playHistory.ts` — 30-entry ring buffer keyed by `serverUrl`, storing a whole
+  `NavidromeSong` (reusing `SongSchema`, so a stored row feeds `prepare()` with no refetch).
+  Written from `App.tsx`'s `onSelectSong` once `prepare()` resolves — the same moment
+  `NavidromePlaybackSource` scrobbles — inside a `try/catch`, because history must never be why a
+  song fails to load. `RecentPane` renders it as one-click song rows. The old newest-albums list
+  is **gone**, not kept as a fallback: "recent" means recently played by you, and recently *added
+  to the server* is a different list wearing the same label. An empty history is one line of text,
+  and `client.getAlbumList` now has no caller in the UI (still wrapped and tested).
+- `client.getRandomSongs(size)` (`getRandomSongs` was the one obvious endpoint left unwrapped)
+  behind a fourth `RandomPane`: over-fetch 15, drop anything past the 12-min cap, show 10,
+  Randomize re-rolls by bumping a `seq` that is `useAsync`'s key (so a fast double-click can't
+  paint a stale deal). `.sh-lib-tab` got `nowrap` + `min-width: 0` for the fourth tab.
+- `SongRow` takes an optional `coverClient`, which swaps the track-number column for a 24 px
+  `CoverThumb`. **Search, Recent and Random pass it**; Browse does not — inside one album the
+  track number is the useful column and every thumb would be the same picture. Falls back to
+  `song.albumId` when the `coverArt` tag is empty, since Navidrome resolves album ids through
+  `getCoverArt` too; a wrong guess 404s into the existing `onError` placeholder. Reuses
+  `AlbumRow`'s memoized URL cache, so no new fetch machinery and no extra work per keystroke in
+  the search box.
+
+**Added after Phase 6 — Space pauses in Mode 1.** `settings.playKeybind` (default `Space`) now
+means *pause/resume* when `playback.source === "server"`, and still means autoplay ↔ manual under
+Spotify, where the game cannot pause anything it owns. `useKeybinds` runs the same two calls
+`ServerTransportControls` does — `src.pause()` and `playWithOptionalCountIn()` — behind a
+module-level `transportBusy` flag (the keyboard's copy of the button's `busy`), and pulses nothing:
+`ScreenPulse` already derives PAUSED from `phase`. **Mode 1 therefore has no key for
+manual → autoplay**; a lane key covers the other direction, the AFK switch and
+`settings.autoplay` cover this one, and the settings panel calls the field "Pause key" in that
+mode. Branching on `playback.source` is deliberate here — the CLAUDE.md rule against branching on
+the mode is about the *clock* in `useGameLoop`, and this is the same predicate
+`ServerTransportControls` and `useChartGeneration` already use.
 
 **Fixed after Phase 6:** the DSP was shipping in the main Vite chunk, contrary to what Phase 4
 intended — `chartCache.ts` and `serverDiagnostics.ts` imported `ONSET_ANALYSIS_VERSION` from the

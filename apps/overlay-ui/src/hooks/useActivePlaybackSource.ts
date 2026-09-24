@@ -21,6 +21,7 @@ import {
 } from "../lib/playback/activeSource.js";
 import type { NavidromePlaybackSource } from "../lib/playback/NavidromePlaybackSource.js";
 import { clearPreparedAudio } from "../lib/analysis/preparedAudio.js";
+import { playWithOptionalCountIn } from "../lib/countIn.js";
 
 type WindowWithServerSource = Window & {
   __serverSource?: NavidromePlaybackSource;
@@ -81,11 +82,16 @@ export function useActivePlaybackSource(): void {
    *
    * `play()` returns early when already playing, so the autoplay ↔ manual toggle
    * and a resume-from-pause both land here harmlessly.
+   *
+   * A start from the top counts in first — 3 · 2 · 1 · GO! with the audio
+   * scheduled behind it, so the opening notes scroll in from the top edge rather
+   * than appearing on the receptors. Everything that is not a from-the-top start
+   * (a resume, a mode toggle) falls through to the plain `play()` this always was.
    */
   useEffect(() => {
     if (phase !== "autoplay" && phase !== "manual") return;
     const src = activePlaybackSource();
     if (!src || src.id !== "server") return;
-    void src.play();
+    void playWithOptionalCountIn();
   }, [phase]);
 }

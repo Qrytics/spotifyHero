@@ -35,7 +35,7 @@ Available on [Itch.io](https://spotifyhero.itch.io) (now). Steam build pipeline 
 - You pick a music source on launch: **My Library** (your music server) or **Spotify**.
 - From your library you pick a song and the game plays it. On Spotify you play any song and the game follows along.
 - spotifyHero charts the track and displays a note highway in a **small floating window** (default **180×420** px on first launch in the Tauri app) that stays above all other windows.
-- The game can run in **autoplay** (notes hit themselves) or **manual** play. `AppSettings` defaults to **manual** first (`autoplay: false`). Press **Space** (configurable) during a song to **toggle autoplay ↔ manual**; in manual mode, use **D F J K** (defaults) when notes reach the hit line.
+- The game can run in **autoplay** (notes hit themselves) or **manual** play. `AppSettings` defaults to **manual** first (`autoplay: false`). In manual mode, use **D F J K** (defaults) when notes reach the hit line — a lane key is also what switches autoplay → manual, so no other key is needed for that. **Space** (configurable) **pauses and resumes** in My Library mode, where the game owns the audio; under Spotify, where it does not, it toggles autoplay ↔ manual instead.
 - Your score, combo, and accuracy are tracked. When the song ends, results are shown and your score is submitted to the leaderboard.
 - One click generates a **challenge link** you can send to friends: they load the same song and try to beat your score.
 
@@ -106,14 +106,24 @@ scoring engine, the highway and the leaderboard, and nothing else.
 | Who plays the audio | the game does (`AudioBufferSourceNode`) | Spotify does |
 | Playhead | exact, from `AudioContext.currentTime` | reconstructed from polls, ±tens of ms |
 | Chart from | real onset analysis of the decoded audio | a synthetic beat grid from the track's BPM |
-| Song selection | in-game browser (browse / search / recent) | whatever you start in Spotify |
+| Song selection | in-game browser (browse / search / recent / random) | whatever you start in Spotify |
 | Needs | a Navidrome (or Subsonic-compatible) server | a Spotify account and the desktop client |
 | Transport | play / pause / restart / volume in-game | Spotify's own controls |
 
 **My Library setup.** Enter the server URL, username and password once. Authentication is
 Subsonic's salted token (`md5(password + salt)`), so the password is never sent, and the
 credential is kept under its own `spotifyHero_navidrome_v1` localStorage key — **not** in the
-keychain yet, so treat it as you would a browser-saved password.
+keychain yet, so treat it as you would a browser-saved password. The server address and username
+come back in the form on every later visit (under `spotifyHero_navidrome_login_v1`), and so does
+the password while **Remember password** is ticked — including after a login that failed, which is
+when you actually need them. Ticking the box stores the plaintext, which is the same exposure as
+the token already sitting beside it. Untick it, or sign out, to drop it.
+
+**Finding something to play.** *Browse* drills artist → album → song; *Search* is `search3` over
+the whole library; *Recent* is the songs you have actually played, newest first, one click to
+replay (local to this machine — Subsonic has no recently-played-songs endpoint — and empty until
+you have played something); *Random* deals ten playable songs, with album art and a Randomize
+button for ten more.
 
 Picking a song downloads it, decodes it, analyses it, and builds the chart — four stages with a
 progress bar, typically a few seconds on a LAN. Analysis runs in a worker, and both the analysis
@@ -370,8 +380,15 @@ points = BASE_POINTS[judgement] × COMBO_MULTIPLIER
 `accuracy = (perfects × 1.0 + greats × 0.75) / totalNotes`
 
 ### Autoplay ↔ Manual toggle
-Press **Space** (configurable) at any time during a song to switch modes.
-Switching mid-song does **not** reset your score or combo.
+Hitting any lane key switches autoplay → manual at any time during a song, and
+switching mid-song does **not** reset your score or combo. Under **Spotify**,
+**Space** (configurable) toggles the two modes in either direction.
+
+### Pause (My Library only)
+**Space** pauses and resumes the music — the same thing the ❙❙ button in the
+bottom bar does, count-in included, so pausing during the 3·2·1 counts you in
+again on resume. Spotify mode has no pause key: its transport belongs to the
+Spotify client, so Space keeps the mode toggle there.
 
 ---
 
@@ -384,7 +401,7 @@ Settings are stored in `~/.local/share/spotifyHero/settings.json` (Linux) or equ
 | `musicSource` | `null` | `null` = ask on launch, then `"server"` (My Library) or `"spotify"` |
 | `difficulty` | `medium` | easy / medium / hard / expert |
 | `autoplay` | `false` | Start in autoplay vs manual (`AppSettings` default) |
-| `playKeybind` | `Space` | Toggle autoplay/manual |
+| `playKeybind` | `Space` | Pause/resume in My Library mode; toggle autoplay/manual under Spotify |
 | `laneKeys` | `["d","f","j","k"]` | Keys for lanes 0–3 |
 | `playbackTimingOffsetMs` / `serverPlaybackTimingOffsetMs` | `0` | Hit-timing offset, one per music source (Spotify needs far more of it). The in-game calibrator writes whichever is active. |
 | `playerName` | _(none)_ | Display name on leaderboard |

@@ -22,7 +22,10 @@ impl Default for Settings {
         Self {
             always_on_top: true,
             opacity: 0.95,
-            note_scroll_speed: 1.0,
+            // Matches `AppSettingsSchema`'s default (DIFFICULTY_SCROLL_SPEED.medium).
+            // `load_app_settings` falls back to this when the key is absent, so a
+            // stale value here would overwrite the UI's default on first launch.
+            note_scroll_speed: 1.3,
             visual_note_offset_ms: 0,
             difficulty: "medium".into(),
             autoplay: true,

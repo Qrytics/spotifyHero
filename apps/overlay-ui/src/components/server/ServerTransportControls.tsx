@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useGameStore } from "../../store/gameStore.js";
 import { activePlaybackSource } from "../../lib/playback/activeSource.js";
 import { clearPreparedAudio } from "../../lib/analysis/preparedAudio.js";
+import { playWithOptionalCountIn } from "../../lib/countIn.js";
 
 /**
  * Transport for music-server mode — the game owns the audio here, so it has to
@@ -14,12 +15,14 @@ import { clearPreparedAudio } from "../../lib/analysis/preparedAudio.js";
  * scoring rules. Restart-from-the-top is the one reposition v1 allows, which is
  * why `capabilities.seek` is `false` for both sources.
  *
- * The 180 px minimum window is the binding constraint: buttons are 15 px glyphs
- * and the volume slider is 30 px.
+ * **No volume slider, either.** A 30 px range input was unreadable and
+ * unhittable at the 180 px minimum window width; `-` / `=` set volume from the
+ * keyboard now (`useKeybinds`) and the level pulses over the highway.
+ *
+ * The 180 px minimum window is the binding constraint: buttons are 15 px glyphs.
  */
 export function ServerTransportControls(): React.ReactElement {
   const phase = useGameStore((s) => s.phase);
-  const volumePercent = useGameStore((s) => s.playback?.volumePercent ?? 100);
   const [busy, setBusy] = useState(false);
 
   const playing = phase === "autoplay" || phase === "manual";
@@ -46,7 +49,10 @@ export function ServerTransportControls(): React.ReactElement {
           run(async () => {
             const src = activePlaybackSource();
             if (!src) return;
-            await (playing ? src.pause() : src.play());
+            // Not `src.play()`: resuming a song that was paused during its own
+            // count-in has to count in again, or the notes it was holding back
+            // land on the receptors the instant the audio starts.
+            await (playing ? src.pause() : playWithOptionalCountIn());
           })
         }
       >
@@ -64,23 +70,6 @@ export function ServerTransportControls(): React.ReactElement {
       >
         ↺
       </IconButton>
-
-      <input
-        type="range"
-        min={0}
-        max={100}
-        step={1}
-        value={volumePercent}
-        title={`Volume ${volumePercent}%`}
-        aria-label="Volume"
-        onChange={(e) => {
-          const pct = Number.parseInt(e.target.value, 10);
-          // Not routed through `run`: dragging fires continuously, and
-          // `setVolume` is a synchronous gain write with an event after it.
-          void activePlaybackSource()?.setVolume(pct / 100);
-        }}
-        style={{ width: 30, height: 10, flex: "0 0 auto" }}
-      />
 
       <IconButton
         title="Back to library"

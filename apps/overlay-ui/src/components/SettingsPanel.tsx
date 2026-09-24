@@ -167,7 +167,12 @@ export function SettingsPanel({
           <strong style={{ color: "var(--text)" }}>autoplay</strong> to{" "}
           <strong style={{ color: "var(--text)" }}>manual</strong> (no play key needed).{" "}
           <strong style={{ color: "var(--text)" }}>{formatKeybindLabel(draft.playKeybind)}</strong>{" "}
-          is optional to toggle modes anytime.
+          {draft.musicSource === "server"
+            ? "pauses and resumes the music."
+            : "toggles modes anytime."}{" "}
+          <strong style={{ color: "var(--text)" }}>−</strong> and{" "}
+          <strong style={{ color: "var(--text)" }}>=</strong> change volume (My
+          Library only).
         </p>
 
         <div>
@@ -248,7 +253,11 @@ export function SettingsPanel({
         )}
 
         <div>
-          <label style={labelStyle}>Play mode toggle key (optional)</label>
+          <label style={labelStyle}>
+            {draft.musicSource === "server"
+              ? "Pause key"
+              : "Play mode toggle key (optional)"}
+          </label>
           <input
             style={inputStyle}
             value={draft.playKeybind}
@@ -328,7 +337,8 @@ export function SettingsPanel({
             </span>
           </div>
           <span style={{ fontSize: "8px", color: "#666", marginTop: "2px", display: "block" }}>
-            Higher = notes move faster toward the hit line.
+            Higher = notes move faster toward the hit line. Raising difficulty
+            raises this with it; ↑ / ↓ adjust it mid-song.
           </span>
         </div>
 

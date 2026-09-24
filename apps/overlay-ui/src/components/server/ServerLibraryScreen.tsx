@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
-  PAGE_SIZE,
   formatDuration,
   isTrackTooLong,
   songDurationMs,
@@ -10,22 +9,35 @@ import {
   type NavidromeSong,
 } from "../../lib/navidrome/client.js";
 import { useNavidromeAuth } from "../../hooks/useNavidromeAuth.js";
+import {
+  clearPlayHistory,
+  loadPlayHistory,
+  type PlayHistoryEntry,
+} from "../../lib/navidrome/playHistory.js";
 import { NavidromeLoginForm } from "./NavidromeLoginForm.js";
 
 /**
  * Music-server library browser for `phase === "idle"` when
  * `settings.musicSource === "server"`.
  *
- * A drill-down stack in local React state (Artists → Albums → Songs) plus a
- * Search tab and a Recent tab — no router, matching the repo's conventions. The
- * window is 180 px wide, so everything is a vertical list, never a grid, and
- * rows are ~28 px with 8–10 px text.
+ * A drill-down stack in local React state (Artists → Albums → Songs) plus
+ * Search, Recent (local play history) and Random tabs — no router, matching the
+ * repo's conventions. The window is 180 px wide, so everything is a vertical
+ * list, never a grid, and rows are ~28 px with 8–10 px text.
  *
  * No virtualization: `LeaderboardPanel` doesn't virtualize either, and
- * drill-down keeps each list short. Album lists paginate at `PAGE_SIZE`.
+ * drill-down keeps each list short.
  */
 
-type Tab = "browse" | "search" | "recent";
+type Tab = "browse" | "search" | "recent" | "random";
+
+/** Four tabs have to fit one line at the 180 px minimum width — keep these short. */
+const TAB_LABELS: Record<Tab, string> = {
+  browse: "Browse",
+  search: "Search",
+  recent: "Recent",
+  random: "Random",
+};
 
 type StackNode =
   | { kind: "artists" }
@@ -76,7 +88,10 @@ export function ServerLibraryScreen({
       <NavidromeLoginForm
         busy={auth.busy}
         error={auth.error}
-        onSubmit={(url, user, pass) => void auth.login(url, user, pass)}
+        saved={auth.savedLogin}
+        onSubmit={(url, user, pass, remember) =>
+          void auth.login(url, user, pass, remember)
+        }
         onBack={() => onChangeSource?.()}
       />
     );
@@ -137,7 +152,9 @@ function LibraryBrowser({
         : node.label
       : tab === "search"
         ? "Search"
-        : "Recent";
+        : tab === "recent"
+          ? "Recently played"
+          : "Random picks";
 
   return (
     <div
@@ -158,7 +175,7 @@ function LibraryBrowser({
           borderBottom: "1px solid rgba(60,60,70,0.5)",
         }}
       >
-        {(["browse", "search", "recent"] as const).map((t) => (
+        {(["browse", "search", "recent", "random"] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -167,7 +184,7 @@ function LibraryBrowser({
             className="sh-lib-tab"
             onClick={() => setTab(t)}
           >
-            {t === "browse" ? "Browse" : t === "search" ? "Search" : "Recent"}
+            {TAB_LABELS[t]}
           </button>
         ))}
       </div>
@@ -202,7 +219,16 @@ function LibraryBrowser({
           />
         )}
         {tab === "recent" && (
-          <RecentPane client={client} onSelectAlbum={selectAlbum} />
+          <RecentPane
+            client={client}
+            {...(onSelectSong ? { onSelectSong } : {})}
+          />
+        )}
+        {tab === "random" && (
+          <RandomPane
+            client={client}
+            {...(onSelectSong ? { onSelectSong } : {})}
+          />
         )}
       </div>
 
@@ -387,6 +413,10 @@ function SearchPane({
             <SongRow
               key={s.id}
               song={s}
+              // Same reasoning as Random: search hits come from all over the
+              // library, so the thumb identifies the row and a track number
+              // does not.
+              coverClient={client}
               onClick={() => onSelectSong?.(s, client)}
             />
           ))}
@@ -409,65 +439,125 @@ function SearchPane({
   );
 }
 
+/**
+ * Songs you have actually played, newest first — read straight from
+ * `lib/navidrome/playHistory`, which `App.tsx` writes once a track has
+ * downloaded and decoded.
+ *
+ * Subsonic has no recently-played-songs endpoint, so this is local. Recently
+ * *added* albums used to fill the pane while the history was empty; that is
+ * gone deliberately — "recent" here means recently played by you, and a list of
+ * whatever was last uploaded to the server is a different thing wearing the
+ * same label. An empty history shows one line saying so.
+ *
+ * No subscription needed: this screen only mounts under `phase === "idle"`, so
+ * coming back from a round remounts it and re-reads the list.
+ */
 function RecentPane({
   client,
-  onSelectAlbum,
+  onSelectSong,
 }: {
   client: NavidromeClient;
-  onSelectAlbum: (a: NavidromeAlbum) => void;
+  onSelectSong?: (s: NavidromeSong, c: NavidromeClient) => void;
 }): React.ReactElement {
-  const [albums, setAlbums] = useState<NavidromeAlbum[]>([]);
-  const [offset, setOffset] = useState(0);
-  const [done, setDone] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const loadedUpTo = useRef(-1);
+  const [entries, setEntries] = useState<PlayHistoryEntry[]>(() =>
+    loadPlayHistory(client.serverUrl)
+  );
 
-  useEffect(() => {
-    if (loadedUpTo.current === offset) return;
-    loadedUpTo.current = offset;
-    const ac = new AbortController();
-    setLoading(true);
-    client
-      .getAlbumList("newest", { size: PAGE_SIZE, offset }, ac.signal)
-      .then((page) => {
-        if (ac.signal.aborted) return;
-        setAlbums((prev) => (offset === 0 ? page : [...prev, ...page]));
-        setDone(page.length < PAGE_SIZE);
-        setError(null);
-      })
-      .catch((e: unknown) => {
-        if (ac.signal.aborted) return;
-        setError(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => {
-        if (!ac.signal.aborted) setLoading(false);
-      });
-    return () => ac.abort();
-  }, [client, offset]);
+  if (entries.length === 0) {
+    return <Hint>Songs you play show up here.</Hint>;
+  }
 
   return (
     <>
-      {albums.map((a) => (
-        <AlbumRow
-          key={a.id}
-          client={client}
-          album={a}
-          onClick={() => onSelectAlbum(a)}
+      {entries.map((e) => (
+        <SongRow
+          key={e.song.id}
+          song={e.song}
+          // Stored rows are whole `NavidromeSong`s, so `coverArt` came along with
+          // the history entry — no refetch to show the thumb.
+          coverClient={client}
+          onClick={() => onSelectSong?.(e.song, client)}
         />
       ))}
-      {loading && <Hint>Loading…</Hint>}
-      {error && <Hint error>{error}</Hint>}
-      {!loading && !error && albums.length === 0 && <Hint>Nothing here.</Hint>}
-      {!loading && !done && albums.length > 0 && (
+      <button
+        type="button"
+        className="sh-lib-row"
+        onClick={() => {
+          clearPlayHistory();
+          setEntries([]);
+        }}
+        title="Forget the songs you have played"
+      >
+        <span className="sh-lib-row-sub">⌫ Clear history</span>
+      </button>
+    </>
+  );
+}
+
+const RANDOM_SIZE = 10;
+/**
+ * Over-fetch so that filtering out tracks past the 12-minute analysis cap still
+ * leaves a full deal of `RANDOM_SIZE` playable songs.
+ */
+const RANDOM_FETCH = 15;
+
+/** Ten random playable songs, and a button to deal ten more. */
+function RandomPane({
+  client,
+  onSelectSong,
+}: {
+  client: NavidromeClient;
+  onSelectSong?: (s: NavidromeSong, c: NavidromeClient) => void;
+}): React.ReactElement {
+  const [seq, setSeq] = useState(0);
+  const load = useCallback(
+    (signal: AbortSignal) => client.getRandomSongs(RANDOM_FETCH, signal),
+    // `seq` is an intentional dependency the body doesn't read: bumping it is
+    // what re-rolls the deal. `getRandomSongs` takes no cursor — the server
+    // picks afresh on every call.
+    [client, seq]
+  );
+  const { data, error, loading } = useAsync(load, `random:${seq}`);
+
+  const songs = data
+    ? data.filter((s) => !isTrackTooLong(s)).slice(0, RANDOM_SIZE)
+    : [];
+
+  return (
+    <>
+      <div style={{ flexShrink: 0, paddingBottom: "3px" }}>
         <button
           type="button"
           className="sh-lib-row"
-          onClick={() => setOffset(albums.length)}
+          disabled={loading}
+          onClick={() => setSeq((n) => n + 1)}
+          title="Pick ten new songs"
         >
-          <span className="sh-lib-row-sub">…load more</span>
+          <span
+            className="sh-lib-row-title"
+            style={{
+              flex: 1,
+              textAlign: "center",
+              color: "var(--accent-library)",
+            }}
+          >
+            {loading ? "Shuffling…" : "🎲 Randomize"}
+          </span>
         </button>
+      </div>
+      {error && <Hint error>{error}</Hint>}
+      {!loading && !error && songs.length === 0 && (
+        <Hint>No playable songs came back. Try again.</Hint>
       )}
+      {songs.map((s) => (
+        <SongRow
+          key={s.id}
+          song={s}
+          coverClient={client}
+          onClick={() => onSelectSong?.(s, client)}
+        />
+      ))}
     </>
   );
 }
@@ -583,11 +673,20 @@ function AlbumRow({
   );
 }
 
+/**
+ * Pass `coverClient` to swap the leading track-number column for the album
+ * thumbnail. Worth it wherever the rows come from all over the library — Search,
+ * Recent, Random — where a track number says nothing. Inside one album (Browse)
+ * the number is the more useful of the two and every thumb would be the same
+ * picture, so that is the one list that keeps it.
+ */
 function SongRow({
   song,
+  coverClient,
   onClick,
 }: {
   song: NavidromeSong;
+  coverClient?: NavidromeClient;
   onClick: () => void;
 }): React.ReactElement {
   const tooLong = isTrackTooLong(song);
@@ -600,16 +699,26 @@ function SongRow({
       onClick={onClick}
       title={tooLong ? "Too long to analyze" : song.title}
     >
-      <span
-        style={{
-          flex: "0 0 14px",
-          fontSize: 8,
-          color: "var(--text-muted)",
-          textAlign: "right",
-        }}
-      >
-        {song.track ?? ""}
-      </span>
+      {coverClient ? (
+        <CoverThumb
+          client={coverClient}
+          // Navidrome resolves a bare album id through `getCoverArt` too, so the
+          // fallback covers songs whose `coverArt` tag came back empty. A wrong
+          // guess just 404s into `CoverThumb`'s placeholder.
+          coverArt={song.coverArt ?? song.albumId}
+        />
+      ) : (
+        <span
+          style={{
+            flex: "0 0 14px",
+            fontSize: 8,
+            color: "var(--text-muted)",
+            textAlign: "right",
+          }}
+        >
+          {song.track ?? ""}
+        </span>
+      )}
       <span style={{ minWidth: 0, flex: 1 }}>
         <span className="sh-lib-row-title" style={{ display: "block" }}>
           {song.title}
