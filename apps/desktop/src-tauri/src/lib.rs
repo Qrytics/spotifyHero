@@ -33,7 +33,8 @@ pub fn run() {
             .max_inner_size(640.0, 1200.0)
             .always_on_top(false)
             .decorations(false)
-            .transparent(false)
+            // No `.transparent(false)`: on macOS that builder method only exists behind tauri's
+            // `macos-private-api` feature, and false is already the default for an opaque window.
             // WebView2: disable Ctrl+/wheel page zoom (often mistaken for “everything on my PC scaled”).
             .zoom_hotkeys_enabled(false)
             .maximizable(false)

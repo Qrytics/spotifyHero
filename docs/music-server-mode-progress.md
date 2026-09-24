@@ -11,9 +11,11 @@ pnpm --filter "./packages/**" --filter "./apps/overlay-ui" type-check
 pnpm --filter "./packages/**" --filter "./apps/overlay-ui" test     # green
 ```
 
-Scope the filters: the root `pnpm build` runs `apps/desktop`, which needs `cargo`.
+The desktop shell builds too, as of 2026-09-24: `cargo check --all-targets` is clean and
+`pnpm build:desktop` produces `spotifyHero.app` + `spotifyHero_0.0.1_aarch64.dmg` (ad-hoc
+signed, no Developer ID). The app launches and stays up at ~110 MB RSS idle.
 
-**Not** verified: anything that needs the real Tauri build or the real server — see
+**Not** verified: anything that needs the real server, or eyes on the running UI — see
 "Still needs verification against the real thing" at the bottom. No one has played a song in
 Mode 1 on hardware yet; that is the next thing to do.
 
@@ -269,8 +271,7 @@ scrubbing is out of v1 by decision, so nothing would call it.
 ## Remaining
 
 Nothing in the plan's phases. `pnpm build`, `type-check` and `test` are green for
-`./packages/**` + `./apps/overlay-ui` (the root `pnpm build` still dies in `apps/desktop` for want
-of `cargo` — unrelated, and true before this work).
+`./packages/**` + `./apps/overlay-ui`, and `apps/desktop` now builds as well (see above).
 
 What is left is the real-hardware verification below, plus two deliberate deferrals:
 - per-mode hit windows (`TODO(hit-windows)` in `useGameLoop.ts`);
@@ -283,21 +284,15 @@ now lives in `packages/onset-analysis/src/version.ts` behind a `./version` subpa
 DSP in its graph. The analyser is a lazy 10 kB chunk again (main chunk 380 → 371 kB), and the
 `vite build` warning is gone. **Import the version from the subpath, never from the root.**
 
-## Not committed
+## Committed
 
-Everything above is uncommitted on `main`. Suggested split:
-1. Phase 0 — audio-engine clock move + tests + shim
-2. Phase 1 — navidrome client (md5, credentials, client, tests)
-3. Phase 2 — mode selection + library browser
-4. Phase 3 — playback source abstraction + real audio
-5. Phase 4 — onset analysis package + worker + chart cache + server chart generation
-6. Phase 5 — `useGameLoop` exact-clock adaptation + the volume-gate fix (touches the highest
-   blast-radius file in the repo; worth its own commit and its own review)
-7. Phase 6 — progress UI, chart diagnostics panel, README
+All six phases landed on `main` as `d86fcf8` ("Music-server mode: play and chart your own
+library"), followed by `81011b6` (the main-chunk fix described above).
 
 ## Still needs verification against the real thing (from plan §8)
 
 1. `format=raw` actually honoured by Navidrome 0.63.2.
 2. WKWebView `decodeAudioData` codec coverage on macOS for FLAC/Opus (fallback: `format=mp3`).
 3. `outputLatency` non-zero on macOS **and** Windows.
-4. Real Tauri RSS with a ~92 MB `AudioBuffer` held.
+4. Real Tauri RSS with a ~92 MB `AudioBuffer` held. Baseline measured 2026-09-24: the release
+   app idles at ~110 MB RSS with nothing loaded, so watch for ~200 MB during a long track.
