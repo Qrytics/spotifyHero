@@ -139,3 +139,129 @@ describe("gameStore updateSettings difficulty regen", () => {
     expect(useGameStore.getState().phase).toBe("manual");
   });
 });
+
+describe("gameStore music source switch", () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  /** Puts the store mid-song on `source`, with the round already under way. */
+  function playing(source: "spotify" | "server"): void {
+    useGameStore.getState().updateSettings({ musicSource: source });
+    useGameStore.setState({
+      chart: makeChart("track-a"),
+      phase: "manual",
+      playback: playback({ isPlaying: true, positionMs: 20_000, trackId: "track-a" }),
+      lastPlayPhase: "manual",
+      score: 4200,
+      combo: 12,
+    });
+  }
+
+  /**
+   * `App.tsx` gates the gameplay view on `autoplay | manual | paused` and both the
+   * source picker and the library screen on `idle`. A switch that leaves the phase
+   * alone therefore strands the player on the old source's highway.
+   */
+  it("returns to idle when leaving Spotify for My Library", () => {
+    playing("spotify");
+
+    useGameStore.getState().updateSettings({ musicSource: "server" });
+
+    const state = useGameStore.getState();
+    expect(state.settings.musicSource).toBe("server");
+    expect(state.phase).toBe("idle");
+    expect(state.trackLifecycle).toBe("idle");
+    expect(state.chart).toBeNull();
+    expect(state.playback).toBeNull();
+    expect(state.score).toBe(0);
+  });
+
+  it("returns to idle in the other direction too", () => {
+    playing("server");
+
+    useGameStore.getState().updateSettings({ musicSource: "spotify" });
+
+    expect(useGameStore.getState().phase).toBe("idle");
+    expect(useGameStore.getState().chart).toBeNull();
+  });
+
+  it("returns to idle when clearing the source back to the picker", () => {
+    playing("server");
+
+    useGameStore.getState().updateSettings({ musicSource: null });
+
+    expect(useGameStore.getState().settings.musicSource).toBeNull();
+    expect(useGameStore.getState().phase).toBe("idle");
+  });
+
+  /**
+   * The settings panel saves every field at once, so `musicSource` is present in
+   * the patch on *every* Save. Comparing values rather than testing for presence
+   * is what keeps a scroll-speed tweak from ending the round.
+   */
+  it("does not touch the round when the source is unchanged", () => {
+    playing("server");
+    const chart = useGameStore.getState().chart;
+
+    useGameStore
+      .getState()
+      .updateSettings({ musicSource: "server", noteScrollSpeed: 2.2 });
+
+    const state = useGameStore.getState();
+    expect(state.phase).toBe("manual");
+    expect(state.chart).toBe(chart);
+    expect(state.playback?.trackId).toBe("track-a");
+    expect(state.score).toBe(4200);
+    expect(state.settings.noteScrollSpeed).toBeCloseTo(2.2);
+  });
+});
+
+describe("gameStore resetRound clears the loaded track", () => {
+  beforeEach(() => {
+    resetStore();
+  });
+
+  it("drops playback along with the chart", () => {
+    useGameStore.setState({
+      chart: makeChart("track-a"),
+      phase: "paused",
+      playback: playback({ isPlaying: false, positionMs: 4000, trackId: "track-a" }),
+    });
+
+    useGameStore.getState().resetRound();
+
+    const state = useGameStore.getState();
+    expect(state.playback).toBeNull();
+    expect(state.chart).toBeNull();
+    expect(state.phase).toBe("idle");
+    expect(state.trackLifecycle).toBe("idle");
+  });
+
+  /**
+   * The My Library regression: pause, ✕ back to the library, pick another song.
+   * `onSelectSong` sets `phase: "loading"` before `prepare()` resolves, so if
+   * `resetRound` left the old `playback` behind, the store would sit in
+   * `loading` + the *previous* `trackId` — which is all
+   * `useServerChartGeneration` needs to fire for the wrong track and serve its
+   * cached chart, killing the loading screen on the frame it appeared.
+   *
+   * A null `trackId` is what makes that hook no-op until the real track lands.
+   */
+  it("leaves no stale trackId for the next song's loading phase", () => {
+    useGameStore.setState({
+      chart: makeChart("track-a"),
+      phase: "manual",
+      playback: playback({ isPlaying: true, positionMs: 30_000, trackId: "track-a" }),
+    });
+
+    useGameStore.getState().resetRound();
+    // The library screen's pick, before the new track has downloaded.
+    useGameStore.getState().setPhase("loading");
+
+    const state = useGameStore.getState();
+    expect(state.phase).toBe("loading");
+    expect(state.trackLifecycle).toBe("loading");
+    expect(state.playback?.trackId ?? null).toBeNull();
+  });
+});

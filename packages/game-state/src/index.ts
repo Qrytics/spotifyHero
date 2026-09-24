@@ -223,6 +223,78 @@ function inheritedPlayMode(
   return null;
 }
 
+/**
+ * Everything that has to be dropped to get back to a trackless idle screen:
+ * the chart, the track, the round's score, and any in-flight analysis labels.
+ *
+ * Shared by `resetRound` and by the music-source switch in `updateSettings`,
+ * because these two drifting apart is a bug factory — `resetRound` clearing the
+ * chart but not `playback` is what made the next My Library song skip its loading
+ * screen and arm the previous song's chart.
+ *
+ * `phase: "idle"` is the load-bearing part: `App.tsx` renders the gameplay view
+ * for `autoplay | manual | paused`, so anything that ends a round without moving
+ * the phase leaves the player staring at a highway for a track that is gone.
+ */
+function idleRoundPatch(
+  state: Pick<GameState, "settings">
+): Pick<
+  GameState,
+  | "score"
+  | "combo"
+  | "maxCombo"
+  | "lastComboMilestone"
+  | "comboMilestoneSeq"
+  | "comboBreakSeq"
+  | "accuracy"
+  | "lastScoreEvent"
+  | "lastScoreEventBatch"
+  | "scoreEventSeq"
+  | "session"
+  | "usedAutoplayThisRound"
+  | "chart"
+  | "playback"
+  | "phase"
+  | "trackLifecycle"
+  | "countdownUntilMs"
+  | "sessionPlayMode"
+  | "analysisProgress"
+  | "analysisStage"
+  | "lastPlayPhase"
+> {
+  return {
+    score: 0,
+    combo: 0,
+    maxCombo: 0,
+    lastComboMilestone: 0,
+    comboMilestoneSeq: 0,
+    comboBreakSeq: 0,
+    accuracy: 1,
+    lastScoreEvent: null,
+    lastScoreEventBatch: null,
+    scoreEventSeq: 0,
+    session: null,
+    usedAutoplayThisRound: false,
+    chart: null,
+    /**
+     * Cleared with the chart, not left behind. No track is loaded, and
+     * `NavidromePlaybackSource.stop()` has already dropped the decoded buffer — a
+     * `playback` still naming that track describes something that no longer
+     * exists, and `useServerChartGeneration` keys its work off `playback.trackId`.
+     * On the Spotify path the poller re-pushes within a heartbeat (~9 s) or on any
+     * real change, so clearing is self-healing there.
+     */
+    playback: null,
+    phase: "idle",
+    trackLifecycle: "idle",
+    countdownUntilMs: null,
+    sessionPlayMode: null,
+    analysisProgress: null,
+    analysisStage: null,
+    lastPlayPhase: state.settings.autoplay ? "autoplay" : "manual",
+  };
+}
+
 export const useGameStore = create<GameState>((set, get) => ({
   phase: "idle",
   trackLifecycle: "idle",
@@ -422,35 +494,22 @@ export const useGameStore = create<GameState>((set, get) => ({
     return next === "autoplay" ? "autoplay" : "manual";
   },
 
-  resetRound: () =>
-    set((state) => ({
-      score: 0,
-      combo: 0,
-      maxCombo: 0,
-      lastComboMilestone: 0,
-      comboMilestoneSeq: 0,
-      comboBreakSeq: 0,
-      accuracy: 1,
-      lastScoreEvent: null,
-      lastScoreEventBatch: null,
-      scoreEventSeq: 0,
-      session: null,
-      usedAutoplayThisRound: false,
-      chart: null,
-      phase: "idle",
-      trackLifecycle: "idle",
-      countdownUntilMs: null,
-      sessionPlayMode: null,
-      analysisProgress: null,
-      analysisStage: null,
-      lastPlayPhase: state.settings.autoplay ? "autoplay" : "manual",
-    })),
+  resetRound: () => set((state) => idleRoundPatch(state)),
 
   updateSettings: (patch) =>
     set((state) => {
       const difficultyChanged =
         patch.difficulty !== undefined &&
         patch.difficulty !== state.settings.difficulty;
+
+      /**
+       * `undefined` = not in this patch; `null` = "show the source picker", which
+       * is a real change and must reset too. The settings panel saves every field
+       * at once, so this has to compare values rather than test for presence.
+       */
+      const sourceChanged =
+        patch.musicSource !== undefined &&
+        patch.musicSource !== state.settings.musicSource;
 
       /**
        * Raising difficulty raises scroll speed with it — a denser chart at the
@@ -474,7 +533,10 @@ export const useGameStore = create<GameState>((set, get) => ({
         })
       );
 
+      // A source switch abandons the round outright, so there is nothing to regen
+      // for — and the two patches disagree about `phase` (`idle` vs `loading`).
       const difficultyRegen =
+        !sourceChanged &&
         difficultyChanged &&
         state.chart !== null &&
         state.playback?.trackId != null &&
@@ -523,6 +585,18 @@ export const useGameStore = create<GameState>((set, get) => ({
       return {
         settings,
         ...regenPatch,
+        /**
+         * Switching music source ends the round. Without this the store kept
+         * `phase: "autoplay" | "manual" | "paused"`, and since `App.tsx` gates the
+         * gameplay view on exactly those, leaving Spotify mid-song stranded the
+         * player on a Spotify highway with no way back to the library — the new
+         * source's picker and library screen only render under `phase === "idle"`.
+         *
+         * Built from the new `settings` rather than `state`, so an `autoplay`
+         * change arriving in the same patch (the panel saves every field at once)
+         * is reflected in `lastPlayPhase`.
+         */
+        ...(sourceChanged ? idleRoundPatch({ settings }) : {}),
         ...(patch.autoplay !== undefined
           ? {
               lastPlayPhase: settings.autoplay ? "autoplay" : "manual",
