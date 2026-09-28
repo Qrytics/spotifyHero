@@ -163,12 +163,14 @@ client ID) plus window geometry. Adding a persisted setting usually means touchi
 
 **`docs/windows-playable-plan.md` is implemented** (2026-09-28) — read it for the reasoning
 behind `scripts/setup/setup.js`, the explicit `bundle.targets`, the NSIS/WebView2 block, and the
-README's player-first structure, and for the §6 "deliberately out of scope" list. What is
-**not** done: no `v0.0.1` tag exists yet, so the README's `/releases/latest` link is dead until
-one is pushed, and the workflow has never run (`.github/workflows/windows.yml` is itself still
-uncommitted, so the `main` GitHub already has — `cda9744` — does not contain it). Its §7 list of
-things only a real Windows machine can confirm — mouse-resize of the undecorated window above
-all — is still unverified; do not claim otherwise.
+README's player-first structure, and for the §6 "deliberately out of scope" list.
+Committed and pushed as `8718821`, and **CI run #1 passed on `windows-latest`** (8m55s):
+`pnpm run setup` then `pnpm run build:desktop` both succeeded from a cold cache and produced a
+4.7 MB NSIS installer, so the documented player path is proven end to end on Windows. What is
+**not** done: no `v0.0.1` tag exists yet, so the README's `/releases/latest` link stays dead
+until one is pushed. And CI only proves the installer *builds* — the §7 list of things that
+need a real Windows machine (that it installs on a box without WebView2, and mouse-resize of
+the undecorated window above all) is still unverified; do not claim otherwise.
 
 **`docs/music-server-mode-plan.md` is the approved plan for the next major feature**: two music
 modes — a personal Navidrome music server (primary, the game streams and plays audio itself for

@@ -1,8 +1,9 @@
 # Windows-playable-from-zip: approved plan
 
-**Status: implemented 2026-09-28** (same day it was written, against `cda9744`), except
-the two things that need a push: no `v0.0.1` tag has been cut, so the README's
-`/releases/latest` link is dead, and the CI workflow has never run. See
+**Status: implemented 2026-09-28** (same day it was written, against `cda9744`), pushed as
+`8718821`, and green on CI: [run #1](https://github.com/Qrytics/spotifyHero/actions/runs/36449364240)
+built the NSIS installer on `windows-latest` in 8m55s. One thing still needs a push: no
+`v0.0.1` tag has been cut, so the README's `/releases/latest` link is dead. See
 [§8 As built](#8-as-built) for the deviations and what remains unverified. The plan
 text below is unchanged from approval, so line numbers in it are as of `cda9744` and
 some now point at code this change rewrote.
@@ -424,9 +425,9 @@ whole-repo check that works (and passes); every `packages/*` lint passes on its 
 ### Still unverified — do not claim otherwise
 
 - Everything in §7's Windows list, mouse-resize of the undecorated window above all.
-- The CI workflow itself: `.github/workflows/windows.yml` is still uncommitted, so it has
-  never reached GitHub (whose `main` is at `cda9744`) and has never run. NSIS-only
-  bundling, the dropped WiX/.NET 3.5 dependency and `embedBootstrapper` are all only
-  observable on `windows-latest`.
+- ~~The CI workflow itself.~~ Ran on `8718821` and passed: NSIS-only bundling and the
+  dropped WiX/.NET 3.5 dependency are confirmed on `windows-latest`. But a green build only
+  shows the installer is *produced* — `embedBootstrapper` earns its keep at install time on a
+  machine without WebView2, which CI does not exercise.
 - `pnpm itch:release` is untouched by design (the macOS `app`/`dmg` targets are still in
   the explicit `bundle.targets` list), but was not re-run end to end.
