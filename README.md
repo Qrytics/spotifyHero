@@ -13,20 +13,150 @@ Available on [Itch.io](https://spotifyhero.itch.io) (now). Steam build pipeline 
 ---
 
 ## Table of Contents
-1. [What it does](#what-it-does)
-2. [Tech stack](#tech-stack)
-3. [Repository layout](#repository-layout)
-4. [Music sources](#music-sources)
-5. [How to demo it (fast path)](#how-to-demo-it-fast-path)
-6. [Full development setup](#full-development-setup)
-7. [Running the app](#running-the-app)
-8. [Building for distribution](#building-for-distribution)
-9. [How note generation works](#how-note-generation-works)
-10. [Gameplay rules](#gameplay-rules)
-11. [Configuration](#configuration)
-12. [Leaderboards and sharing](#leaderboards-and-sharing)
-13. [Contributing](#contributing)
-14. [Project roadmap](#project-roadmap)
+1. [▶ Play it on Windows](#-play-it-on-windows)
+2. [What it does](#what-it-does)
+3. [Tech stack](#tech-stack)
+4. [Repository layout](#repository-layout)
+5. [Music sources](#music-sources)
+6. [Development](#development)
+7. [Building for distribution](#building-for-distribution)
+8. [How note generation works](#how-note-generation-works)
+9. [Gameplay rules](#gameplay-rules)
+10. [Configuration](#configuration)
+11. [Leaderboards and sharing](#leaderboards-and-sharing)
+12. [Contributing](#contributing)
+13. [Project roadmap](#project-roadmap)
+
+---
+
+## ▶ Play it on Windows
+
+Two ways in: download the installer, or build it from the repo. Everything you need
+is in this section — you do not need to read anything below it to play.
+
+### Option A — download the installer
+
+1. Grab the latest **`spotifyHero_<version>_x64-setup.exe`** from
+   [**Releases**](https://github.com/Qrytics/spotifyHero/releases/latest).
+2. Run it. The installer is **not code-signed**, so Windows SmartScreen says
+   *"Windows protected your PC"* → click **More info** → **Run anyway**.
+3. It installs for the current user only, so there is no admin (UAC) prompt, and it
+   installs the **WebView2** runtime for you if your Windows does not already have it
+   (Windows 11 and current Windows 10 always do).
+
+Then jump to [Connect your music](#connect-your-music--spotify-recommended).
+
+### Option B — build it from the repo
+
+Prerequisites — install all four first:
+
+| What | Version | Where |
+|---|---|---|
+| **Node.js** | ≥ 20 | [nodejs.org](https://nodejs.org/en/download) (check with `node --version`) |
+| **pnpm** | ≥ 9 | `npm i -g pnpm` |
+| **Rust** | stable | [rustup.rs](https://rustup.rs) |
+| **Visual Studio Build Tools** | 2022 | [Downloads](https://visualstudio.microsoft.com/downloads/) → *Tools for Visual Studio* → **Build Tools for Visual Studio**, and in the installer tick the **"Desktop development with C++"** workload |
+
+> **The C++ workload is the one people miss.** Without it Rust has no linker and the
+> build stops at `link.exe not found`. You do **not** need anything for WebView2 to
+> build: the runtime ships with Windows, and the SDK is vendored by the `webview2-com`
+> crate.
+
+Then, in a fresh **PowerShell** or **Command Prompt**:
+
+```bat
+:: unzip the repo, or:
+git clone https://github.com/Qrytics/spotifyHero.git
+cd spotifyHero
+
+pnpm run setup
+pnpm play
+```
+
+`pnpm run setup` checks your toolchain, installs dependencies and builds the eight
+workspace packages; `pnpm play` compiles the Rust shell and opens the overlay window.
+Use `pnpm run setup`, **with `run`** — plain `pnpm setup` is pnpm's own built-in
+command and does something else entirely. The first `pnpm play` spends a few minutes
+compiling Rust; after that it starts in seconds.
+
+### Connect your music → Spotify (recommended)
+
+spotifyHero follows along with whatever Spotify is playing. Give it a Spotify app of
+your own — that takes a minute and is free:
+
+1. Open the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) and
+   click **Create app** (any name and description will do).
+2. Set the Redirect URI to exactly **`http://127.0.0.1:8888/callback`** — Spotify
+   requires an exact match.
+3. Copy the app's **Client ID** (32 hex characters).
+4. In spotifyHero: **Settings → Spotify Client ID** → paste → **Save**.
+5. Press **Connect**, approve in the browser window that opens, then press play in
+   Spotify. If you were already connected, **Disconnect and Connect again** so the new
+   Client ID is used.
+
+**Why your own Client ID:** the one built into the app belongs to a Spotify app in
+**development mode**, which only lets a handful of allowlisted accounts through —
+everyone else gets a `403` (the app tells you so, and links to the dashboard).
+
+Spotify **Premium is recommended but not required**; on a free account the timing is
+rougher because playback control is limited. The scopes requested are
+`user-read-playback-state`, `user-read-currently-playing`,
+`user-modify-playback-state`, `user-read-email` (leaderboard name) and
+`user-follow-read` (friends leaderboard).
+
+### Or: My Library (a Navidrome music server)
+
+If you run [Navidrome](https://www.navidrome.org) (or anything Subsonic-compatible),
+pick **My Library** instead: the game streams and plays the audio itself, so the
+playhead is exact and charts come from real onset analysis of the audio rather than a
+BPM grid. It feels considerably better than Spotify mode — it just needs a server.
+See [Music sources](#music-sources) for setup and the in-game browser.
+
+> Create a **dedicated Navidrome user** for the game. Its credential lives in
+> `localStorage`, not in the OS keychain.
+
+### First run and controls
+
+The window opens small (**180×420**) and stays above everything else, with a compact
+custom title bar — drag the top strip to move it, and use the two buttons at its right
+to minimize or close.
+
+| Lane | Key | Colour |
+|---|---|---|
+| 0 | **D** | Purple |
+| 1 | **F** | Green |
+| 2 | **J** | Orange |
+| 3 | **K** | Blue |
+
+- Notes **autoplay** until you press a lane key; that switches you to manual play
+  mid-song without resetting score or combo.
+- **Space** does one thing per source: **pause/resume** in My Library (the game owns
+  the audio), **toggle autoplay ↔ manual** under Spotify (where it does not).
+- **Ctrl+Shift+D** opens diagnostics — chart analysis in My Library, Spotify polling
+  in Spotify mode.
+- **Calibrate before you judge the timing:** **Settings → Calibrate timing…** tap
+  along to the beat, and it writes `playbackTimingOffsetMs` for the source you are on.
+  Spotify mode needs far more offset than My Library, and audio latency differs
+  between WebView2 (Windows) and WKWebView (macOS), so a default tuned on one will
+  feel wrong on the other. Each source keeps its own offset.
+
+### Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| *"Windows protected your PC"* | The installer is unsigned. **More info → Run anyway**. |
+| The build stops with `linker 'link.exe' not found` | The **"Desktop development with C++"** workload is missing from Visual Studio Build Tools. Install it, open a new terminal, and re-run `pnpm play`. |
+| Spotify **403** after connecting | The built-in Client ID is a development-mode app. Use your own Client ID (above), then Disconnect → Connect. |
+| *Could not bind 127.0.0.1:8888* during login | Something else holds port 8888 (Jupyter and local proxies are the usual suspects), or you aborted a login and retried within a second or two — wait a few seconds and press Connect again. |
+| Spotify login fails only on a work laptop | The app bundles Mozilla's root certificates (`rustls`) and ignores the Windows certificate store, so a corporate TLS-inspecting proxy is not trusted. Try off that network. |
+| Nothing appears on the highway | No active Spotify device: press play in the Spotify client first. |
+| Cannot resolve `@spotifyhero/*`, or stale behaviour after `git pull` | Workspace packages are consumed through a generated `dist/`. Re-run `pnpm run setup`. |
+| Window will not resize with the mouse | Known-unverified on Windows: the window is undecorated, so the native resize borders may not be there. There is no in-app size control to fall back on yet — please open an issue if you hit this. |
+
+**macOS and Linux:** the same Option B works (`pnpm run setup && pnpm play`); swap the
+Visual Studio prerequisite for Xcode Command Line Tools on macOS, or
+`libwebkit2gtk-4.1-dev` + `build-essential` on Linux. Prebuilt installers are Windows-only
+for now.
 
 ---
 
@@ -63,7 +193,8 @@ Available on [Itch.io](https://spotifyhero.itch.io) (now). Steam build pipeline 
 spotifyHero/
 ├── apps/
 │   ├── desktop/          Tauri 2 Rust shell – native window, Spotify OAuth, IPC
-│   └── overlay-ui/       React + Canvas note highway and HUD
+│   ├── overlay-ui/       React + Canvas note highway and HUD
+│   └── spotifyhero-web/  Isolated Next.js edition (YouTube URL → chart; shares no code)
 ├── packages/
 │   ├── shared-types/     Zod schemas + TypeScript types (shared data contracts)
 │   ├── game-state/       Zustand game store – phase, playback, scoring, settings
@@ -73,16 +204,20 @@ spotifyHero/
 │   ├── onset-analysis/   Pure DSP: mono samples → onsets, tempo, pitch (music-server mode)
 │   ├── chart-generator/  Hybrid note generation pipeline
 │   └── leaderboard-client/ Supabase REST + offline fallback
-├── services/
-│   └── leaderboard/      (Future) optional edge functions / extras
 ├── docs/
 │   ├── architecture.md   System architecture and data flow diagram
 │   ├── gameplay-spec.md  Scoring, judgements, difficulty presets
 │   ├── integration-spec.md Spotify OAuth, Supabase schema, distribution
-│   ├── music-server-mode-plan.md  Music-server mode: the spec it was built to
+│   ├── music-server-mode-plan.md      Music-server mode: the spec it was built to
+│   ├── music-server-mode-progress.md  How far that got, and what is unverified
+│   ├── highway-visual-overhaul-progress.md  Renderer overhaul log
+│   ├── sustain-visual-troubleshooting.md    What has been tried on sustain rendering
+│   ├── windows-playable-plan.md  Windows onboarding / packaging plan
 │   └── ai-agent-guide.md How AI agents should navigate and edit this repo
 ├── supabase/migrations/  SQL to create leaderboard table + RLS (run in Dashboard)
+├── .github/workflows/    CI: Windows build + release artifact
 ├── scripts/
+│   ├── setup/            One-command setup (setup.js: install + build packages)
 │   ├── build/            Build helpers (icon generation)
 │   ├── release/          Release helpers (itch-push.js, itch.env.example)
 │   └── README.md         Script reference
@@ -141,42 +276,33 @@ grid). Same shortcut in Spotify mode opens the Spotify poll panel instead. Copie
 
 ---
 
-## How to demo it (fast path)
+## Development
 
-> **No Spotify credentials required for a UI demo.**
-> The overlay UI ships with a `MockSpotifyPoller` that simulates playback.
-
-### Prerequisites
-- **Node.js ≥ 20** (`node --version`)
-- **pnpm ≥ 9** – install with `npm i -g pnpm`
-
-### Steps
+Setup is the same one command players use — it installs dependencies and builds the
+eight workspace packages, which every app consumes through a generated (gitignored)
+`dist/`:
 
 ```bash
-# 1. Clone
-git clone https://github.com/Qrytics/spotifyHero.git
-cd spotifyHero
-
-# 2. Install all workspace dependencies
-pnpm install
-
-# 3. Build workspace packages (shared-types first if you build individually)
-pnpm --filter @spotifyhero/shared-types build
-pnpm --filter @spotifyhero/gameplay-core build
-pnpm --filter @spotifyhero/chart-generator build
-pnpm --filter @spotifyhero/audio-engine build
-pnpm --filter @spotifyhero/leaderboard-client build
-# Or build everything: `pnpm build` from the repo root (runs each package's build script).
-
-# 4. Start the overlay UI in a browser (demo mode, no Tauri needed)
-pnpm --filter overlay-ui dev
+pnpm run setup       # → node scripts/setup/setup.js
+pnpm run build:packages   # just rebuild packages/*, no install
 ```
 
-Open **http://localhost:1420** in your browser.
+### Browser demo (no accounts, no Rust)
 
-You will see the idle screen. Because the mock poller starts in "not playing" state, open your browser console and run:
+```bash
+pnpm dev:ui          # → http://localhost:1420
+```
 
-> Use **two** underscores: `window.__mockPoller` (not `_mockPoller`).
+The overlay runs in a plain browser tab, with a `MockSpotifyPoller` standing in for
+Spotify. Nothing is installed and no credentials are needed. Press **Space** to toggle
+autoplay ↔ manual, **D F J K** to hit notes.
+
+<details>
+<summary>Starting fake playback from the console</summary>
+
+The mock poller boots in a "not playing" state, so the idle screen is all you get until
+you push a track at it. In the browser console — **two** underscores,
+`window.__mockPoller`, not `_mockPoller`:
 
 ```js
 // Simulate Spotify starting playback with a test track
@@ -193,64 +319,65 @@ window.__mockPoller?.simulatePlay({
 });
 ```
 
-A synthetic chart will be generated and the note highway will start scrolling.
+A synthetic chart is generated from `bpm` and the highway starts scrolling.
 
-Press **Space** to toggle between autoplay and manual (keyboard) mode.
-In manual mode, press **D F J K** to hit notes in lanes 0–3.
+</details>
 
----
+### Native app (Tauri window)
 
-## Full development setup
+```bash
+pnpm play            # alias of pnpm dev:desktop
+```
 
-### Additional prerequisites (for native Tauri window)
-- **Rust ≥ 1.80** – install via [rustup](https://rustup.rs)
-- **Tauri CLI v2** – `cargo install tauri-cli --version "^2"`
-- **System webkit** (Linux: `libwebkit2gtk-4.1`, Windows: WebView2, macOS: built-in)
+Tauri's `beforeDevCommand` now runs `pnpm run build:packages` before starting Vite, so
+this works on a checkout where nothing has been built yet. It needs Rust and a C
+toolchain — see the [prerequisites table](#option-b--build-it-from-the-repo).
 
-### Spotify (no `.env` required)
-The **Spotify Client ID** for this project is built into the desktop app (`apps/desktop/src-tauri/src/spotify/config.rs`). It is a public identifier (PKCE); you do **not** need to create your own Spotify app to clone and play.
+The window is built in `apps/desktop/src-tauri/src/lib.rs`: **180×420** on first launch
+(min 180×280, max 640×1200), undecorated with the custom title bar in
+`WindowChrome.tsx`, always-on-top by default, and page zoom hotkeys disabled. Only
+**minimize** and **close** are rendered — the window is deliberately
+`.maximizable(false)`. Only the window *position* is restored from `settings.json` on
+later launches; size is saved there but never read back.
 
-1. In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), the **spotifyHero** app that uses this client ID must list redirect URI **`http://127.0.0.1:8888/callback`** (exact match). Spotify **development mode** only allows a small allowlisted set of users per app; for wider distribution you either add testers in **User Management** or (recommended for players) have each user create their own free Spotify app and enter its Client ID under **Settings** in the app (same redirect URI). **Extended quota** (unlimited users, no allowlist) requires Spotify’s partner process, not something the code can toggle.
-2. **Optional:** Override the default Client ID with `apps/desktop/src-tauri/.env` (gitignored): `SPOTIFY_CLIENT_ID=...` (dev/build), or use the in-app **Settings** field (stored per machine).
+### Checks
+
+```bash
+pnpm test            # vitest across every package that has tests
+pnpm type-check      # tsc --noEmit everywhere — the reliable whole-repo check
+pnpm lint            # type-check for packages, next lint for spotifyhero-web
+
+cd apps/desktop/src-tauri && cargo check    # Rust, not covered by any pnpm script
+```
+
+A single test file or name:
+
+```bash
+pnpm --filter @spotifyhero/gameplay-core exec vitest run src/__tests__/scoring.test.ts
+pnpm --filter @spotifyhero/chart-generator exec vitest run -t "sustain"
+```
+
+### Spotify (development)
+
+The **Client ID** is built into the desktop app
+(`apps/desktop/src-tauri/src/spotify/config.rs`) as a public PKCE identifier, so a clone
+runs without any credential of your own. Resolution order is per-user
+`settings.json` → `SPOTIFY_CLIENT_ID` env → built-in default; changing it clears stored
+tokens.
+
+That built-in app is in Spotify **development mode** (a handful of allowlisted accounts;
+add testers under **User Management**). **Extended quota** needs Spotify's partner
+process and is not something the code can toggle — which is why players are pointed at
+the in-app **Settings → Spotify Client ID** field instead.
+
+`apps/desktop/src-tauri/.env` (gitignored, see `.env.example`) also works, but **only in
+a development build**: it is loaded from the path baked in at compile time, so it has no
+effect in a shipped binary.
 
 ### Supabase (optional – for leaderboards)
 1. Create a free [Supabase](https://supabase.com) project.
 2. Open **SQL Editor**, paste the contents of `supabase/migrations/20260418120000_leaderboard_entries.sql`, and **Run** (creates `leaderboard_entries`, RLS, and grants). Details also appear in `docs/integration-spec.md`.
-3. Add your project URL and anon key to the app settings (see [Configuration](#configuration)).
-
----
-
-## Running the app
-
-### UI only (browser, no native window)
-```bash
-pnpm --filter overlay-ui dev
-# → http://localhost:1420
-```
-
-### Full native app (Tauri window, always-on-top)
-```bash
-pnpm dev:desktop
-# This starts vite on :1420 and opens the native Tauri overlay window
-```
-
-The native window opens at **180×420** px by default (`apps/desktop/src-tauri/src/lib.rs`), stays above other windows, and uses a **custom title bar** (drag the top strip; compact window controls). You can:
-- **Drag** it by the title strip (not on the minimize / maximize / close icons).
-- **Minimize**, **maximize**, or **close** via the small buttons on the right.
-- **Resize** it (minimum **180×280**).
-- Horizontal window position may be restored from saved settings where implemented.
-
-### Run tests
-```bash
-pnpm test
-# Runs vitest across all packages
-```
-
-### Lint / type-check
-```bash
-pnpm lint
-# Runs tsc --noEmit across all TypeScript packages
-```
+3. Add your project URL and anon key to the app settings (see [Configuration](#configuration)), or set `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` at build time.
 
 ---
 
@@ -278,8 +405,28 @@ pnpm build:desktop
 
 Installers appear under `apps/desktop/src-tauri/target/release/bundle/`:
 - Windows: `.exe` (NSIS) in `bundle/nsis/`
-- macOS: `.dmg` / `.app`
+- macOS: `.app` in `bundle/macos/`, `.dmg` in `bundle/dmg/`
 - Linux: `.deb` / `.AppImage`
+
+`bundle.targets` is an explicit list (`nsis`, `app`, `dmg`, `deb`, `appimage`) rather
+than `"all"`, and Tauri builds only the ones the host OS supports. On Windows that means
+**NSIS only**: `"all"` would also build an MSI through WiX v3, which requires .NET
+Framework 3.5 to be enabled — a first-build failure for a new contributor, for an
+artifact nothing ships. The Windows bundle installs per-user (no UAC) and embeds the
+WebView2 bootstrapper; if players ever report install failures on machines without
+internet, `webviewInstallMode` can be escalated to `offlineInstaller` at the cost of
+~127 MB in the installer.
+
+Neither the Windows installer nor the macOS app is code-signed, so players see
+SmartScreen / Gatekeeper warnings (`pnpm itch:push` prints the macOS instructions).
+
+### CI
+
+`.github/workflows/windows.yml` runs on `windows-latest` for every push to `main`, every
+PR, and every `v*` tag. It runs exactly the two commands the player instructions give —
+`pnpm run setup` then `pnpm run build:desktop` — so a green run is evidence the
+documented path still works, uploads the NSIS installer as a build artifact, and on a
+`v*` tag attaches it to the GitHub release.
 
 ### Steam (future)
 Planned via `steamworks-rs` crate. Achievements and cloud save hooks are stubs in `commands.rs`.
@@ -355,14 +502,20 @@ Beat / onset stream (real onset analysis, or a synthetic BPM grid on Spotify)
 | 2    | J           | Orange |
 | 3    | K           | Blue   |
 
-### Hit windows (default)
-| Judgement | Timing window (±ms) |
-|-----------|---------------------|
-| Perfect   | 22 ms               |
-| Great     | 45 ms               |
-| Good      | 90 ms               |
-| Bad       | 135 ms              |
-| Miss      | > 135 ms            |
+### Hit windows
+
+`DEFAULT_HIT_WINDOWS` (`packages/gameplay-core/src/index.ts`) applies on easy / medium /
+hard; expert swaps in `EXPERT_HIT_WINDOWS` (`apps/overlay-ui/src/hooks/useGameLoop.ts`).
+Both are padded for Spotify's poll jitter, and are the same for both music sources so
+that leaderboard scores stay comparable.
+
+| Judgement | Default (±ms) | Expert (±ms) |
+|-----------|---------------|--------------|
+| Perfect   | 40            | 88           |
+| Great     | 60            | 108          |
+| Good      | 80            | 138          |
+| Bad       | 110           | 188          |
+| Miss      | > 110         | > 188        |
 
 ### Scoring
 ```
@@ -394,7 +547,22 @@ Spotify client, so Space keeps the mode toggle there.
 
 ## Configuration
 
-Settings are stored in `~/.local/share/spotifyHero/settings.json` (Linux) or equivalent OS path via `tauri-plugin-store`.
+Two stores, deliberately:
+
+- The full `AppSettings` (the Zod schema in `packages/shared-types`) lives in
+  **`localStorage`** under `spotifyHero_settings_v1`, written by the game store.
+- A small subset the Rust side needs — always-on-top, scroll speed, both timing offsets,
+  Spotify Client ID — plus window geometry and OAuth tokens is mirrored into Tauri's
+  `settings.json` via `tauri-plugin-store`, in the app data directory:
+
+| OS | Path |
+|---|---|
+| Windows | `%APPDATA%\io.spotifyhero.app\settings.json` |
+| macOS | `~/Library/Application Support/io.spotifyhero.app/settings.json` |
+| Linux | `~/.local/share/io.spotifyhero.app/settings.json` |
+
+That file is **plaintext JSON, including the Spotify refresh token** — there is no
+keychain integration yet (`TODO(keychain)`).
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -407,11 +575,11 @@ Settings are stored in `~/.local/share/spotifyHero/settings.json` (Linux) or equ
 | `playerName` | _(none)_ | Display name on leaderboard |
 | `window.alwaysOnTop` | `true` | Keep window above all others |
 | `window.opacity` | `0.95` | Window transparency (0.1–1.0) |
-| `window.width` | `360` | Default in Zod schema (`shared-types`). Tauri **first-launch** inner width is **180** in `lib.rs` until full geometry restore. |
-| `window.height` | `640` | Schema default; Tauri **first-launch** inner height is **420**. |
-| `supabaseUrl` | _(none)_ | Your Supabase project URL |
-| `supabaseAnonKey` | _(none)_ | Your Supabase anon key |
-| `spotify_client_id` | _(none)_ | Spotify Developer app client ID |
+| `window.width` | `360` | Zod schema default only — it does **not** reach the native window, which `lib.rs` always opens at **180** wide. Resize is saved to Tauri's store (`window_width`) but not read back on launch; only the window *position* is restored. |
+| `window.height` | `640` | Same: schema default, native first launch (and every launch) is **420** tall. |
+| `supabaseUrl` | _(none)_ | Your Supabase project URL. Can also be supplied at build time as `VITE_SUPABASE_URL` |
+| `supabaseAnonKey` | _(none)_ | Your Supabase anon key. Build-time equivalent: `VITE_SUPABASE_ANON_KEY` |
+| `spotifyClientId` | _(none)_ | Spotify Developer app Client ID, as set in **Settings**. This is the Zod / `localStorage` key; the same value is mirrored to Tauri's store under the snake_case key `spotify_client_id`, which is the one Rust reads |
 
 ---
 
@@ -439,6 +607,7 @@ Helper scripts live in `scripts/` with subdirectories by purpose. See [`scripts/
 
 | Script | Command | Purpose |
 |--------|---------|---------|
+| `scripts/setup/setup.js` | `pnpm run setup` | Check the toolchain, install dependencies, build `packages/*`. `--build-only` (`pnpm run build:packages`) skips the install; Tauri's build hooks call it |
 | `scripts/build/generate-tauri-app-icon.ps1` | `pwsh scripts/build/generate-tauri-app-icon.ps1` | Generate all Tauri app icon sizes from source PNG |
 | `scripts/release/itch-push.js` | `pnpm itch:push` | Upload Windows installer to itch.io via butler |
 
@@ -447,10 +616,10 @@ Helper scripts live in `scripts/` with subdirectories by purpose. See [`scripts/
 ## Contributing
 
 1. Fork and clone the repo.
-2. Run `pnpm install`.
+2. Run `pnpm run setup`.
 3. Read `docs/ai-agent-guide.md` for safe edit zones and validation steps.
-4. Make changes, run `pnpm lint && pnpm test`.
-5. Open a pull request.
+4. Make changes, run `pnpm type-check && pnpm test`.
+5. Open a pull request — CI builds it on Windows.
 
 AI coding agents: see `docs/ai-agent-guide.md` for the full navigation and editing guide.
 

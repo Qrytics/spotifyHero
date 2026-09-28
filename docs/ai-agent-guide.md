@@ -39,9 +39,9 @@ spotifyHero/
 
 After any TypeScript change:
 ```bash
-pnpm install          # install deps if needed
-pnpm lint             # runs tsc --noEmit across all packages
-pnpm build            # compiles all packages (excludes Tauri native build)
+pnpm run setup        # install deps if needed + build packages/* (see scripts/setup/)
+pnpm type-check       # runs tsc --noEmit across all packages (`pnpm lint` also tries next lint)
+pnpm test             # vitest across every package that has tests
 ```
 
 After Rust changes in `apps/desktop/src-tauri/`:
@@ -53,7 +53,7 @@ cd apps/desktop/src-tauri && cargo check
 
 | Problem | Fix |
 |---------|-----|
-| `Cannot find module '@spotifyhero/…'` | Run `pnpm install` from repo root |
+| `Cannot find module '@spotifyhero/…'` | Run `pnpm run setup` (or `pnpm run build:packages`) from repo root — packages resolve through a generated `dist/` |
 | PixiJS canvas blank | Check that `chart` is non-null in game store before rendering |
 | Always-on-top not working | Ensure Tauri window label is `"overlay"` and `alwaysOnTop` is set in conf |
 | Score not updating | Confirm `onScoreEvent` is wired in `useGameLoop` and store action is correct |

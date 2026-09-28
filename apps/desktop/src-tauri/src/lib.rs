@@ -12,6 +12,10 @@ use tauri::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Dev-only: `CARGO_MANIFEST_DIR` is baked in at compile time, so in a shipped
+    // binary this points at a path on the machine that built it. Players set their
+    // Spotify Client ID in-app (Settings → Spotify Client ID), which is read first by
+    // `resolve_spotify_client_id` and actually persists.
     let _ = dotenvy::from_filename(Path::new(env!("CARGO_MANIFEST_DIR")).join(".env"));
 
     tauri::Builder::default()
@@ -53,10 +57,14 @@ pub fn run() {
             ) {
                 let _ = win.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
             }
+            // No stored value = first launch, and an overlay game that does not start
+            // on top is not an overlay. `true` is what every other layer already says:
+            // `Settings::default()`, `default_always_on_top()` in commands.rs, and
+            // `AppSettingsSchema.window.alwaysOnTop` in shared-types.
             let always_on_top = store
                 .get("always_on_top")
                 .and_then(|v| v.as_bool())
-                .unwrap_or(false);
+                .unwrap_or(true);
             let _ = win.set_always_on_top(always_on_top);
 
             Ok(())

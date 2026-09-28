@@ -1,0 +1,10 @@
+# Normalise line endings in the repository to LF. Git for Windows defaults to
+# core.autocrlf=true, which would otherwise churn every file a Windows contributor
+# touches.
+* text=auto eol=lf
+
+# Binary assets Git must never touch.
+*.png binary
+*.ico binary
+*.icns binary
+*.wav binary

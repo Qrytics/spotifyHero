@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-pnpm install                 # pnpm workspaces; Node >= 20, pnpm >= 9
+pnpm run setup               # install (skipping spotifyhero-web) + build packages/*; use on a fresh clone
+pnpm run build:packages      # just rebuild packages/* (setup.js --build-only)
 
 pnpm build                   # tsc build of every package (pnpm resolves topological order)
 pnpm type-check              # tsc --noEmit everywhere — the reliable whole-repo check
@@ -13,16 +14,27 @@ pnpm lint                    # same as type-check for packages; runs `next lint`
 pnpm test                    # vitest run in every package that has tests
 
 pnpm dev:ui                  # overlay UI in a browser at :1420 (mock Spotify, no Tauri)
+pnpm play                    # alias of dev:desktop — the name the README gives players
 pnpm dev:desktop             # Tauri native overlay window (starts vite on :1420 too)
 pnpm dev:web                 # Next.js web edition at :3000/games/spotifyHero
 pnpm build:desktop           # installers under apps/desktop/src-tauri/target/release/bundle/
 pnpm itch:release            # build:desktop + butler push (needs scripts/release/itch.env)
 ```
 
-**`pnpm build` before `pnpm dev:ui` on a fresh clone.** Workspace packages are consumed
-through their `dist/` (`main`/`exports` point at `./dist/index.js`), so Vite cannot resolve
-`@spotifyhero/*` until they are compiled. After editing a package, rebuild it (or the
-consuming app sees stale code).
+Note `pnpm run setup`, with `run`: `pnpm setup` is pnpm's own built-in command.
+
+**`pnpm run setup` (or `build:packages`) before `pnpm dev:ui` on a fresh clone.** Workspace
+packages are consumed through their `dist/` (`main`/`exports` point at `./dist/index.js`), so
+Vite cannot resolve `@spotifyhero/*` until they are compiled. After editing a package, rebuild
+it (or the consuming app sees stale code). This no longer applies to `pnpm play` /
+`dev:desktop` / `build:desktop`: Tauri's `beforeDevCommand` and `beforeBuildCommand` both run
+`pnpm run build:packages` first, so those work standalone at the cost of a few seconds of `tsc`.
+
+`pnpm-workspace.yaml` sets **`verifyDepsBeforeRun: false`** deliberately. pnpm otherwise
+installs the *whole* workspace before any `pnpm run`, which would re-install
+`apps/spotifyhero-web` and re-run its ~80 MB `ffmpeg-static` postinstall behind the back of
+`setup.js` — including inside the Tauri build hooks. The cost: `pnpm test` and friends no longer
+self-heal a stale `node_modules`, so run `pnpm run setup` after a dependency change.
 
 Single test / single file:
 
@@ -32,6 +44,13 @@ pnpm --filter @spotifyhero/chart-generator exec vitest run -t "sustain"
 ```
 
 Rust changes: `cd apps/desktop/src-tauri && cargo check` (not covered by any pnpm script).
+
+CI is one workflow, `.github/workflows/windows.yml` on `windows-latest` (push to `main`, PRs,
+`workflow_dispatch`, `v*` tags). It runs `pnpm run setup` then `pnpm run build:desktop` —
+literally the two commands the README gives a player — uploads the NSIS installer, and attaches
+it to the GitHub release on a tag. Keep it that pair: the point is that a green run proves the
+documented path, which is why it does not use `tauri-apps/tauri-action`. There is no macOS or
+Linux job.
 
 ## Three deployables, two codebases
 
@@ -142,6 +161,15 @@ client ID) plus window geometry. Adding a persisted setting usually means touchi
 
 ## Active work
 
+**`docs/windows-playable-plan.md` is implemented** (2026-09-28) — read it for the reasoning
+behind `scripts/setup/setup.js`, the explicit `bundle.targets`, the NSIS/WebView2 block, and the
+README's player-first structure, and for the §6 "deliberately out of scope" list. What is
+**not** done: no `v0.0.1` tag exists yet, so the README's `/releases/latest` link is dead until
+one is pushed, and the workflow has never run (`.github/workflows/windows.yml` is itself still
+uncommitted, so the `main` GitHub already has — `cda9744` — does not contain it). Its §7 list of
+things only a real Windows machine can confirm — mouse-resize of the undecorated window above
+all — is still unverified; do not claim otherwise.
+
 **`docs/music-server-mode-plan.md` is the approved plan for the next major feature**: two music
 modes — a personal Navidrome music server (primary, the game streams and plays audio itself for
 the first time) and Spotify (demoted to secondary). Unlike the rest of `docs/`, that file is
@@ -159,9 +187,11 @@ only on `exactClockRef` (never on the mode). `packages/onset-analysis` is an 8th
 
 ## Docs are partly stale — code wins
 
-`docs/` and `README.md` are useful for intent but have drifted; verify before relying on them.
-Known cases: `docs/architecture.md` and `docs/ai-agent-guide.md` say **PixiJS** (the renderer
-is Canvas 2D in `packages/note-highway`), the hit windows in `README.md`/`docs/gameplay-spec.md`
+`docs/` is useful for intent but has drifted; verify before relying on it. **`README.md` was
+brought back in line on 2026-09-28** (hit windows, settings paths, repo tree, window controls,
+config keys) — it is now the trustworthy one, so fix it forward rather than treating it as stale.
+Known remaining cases: `docs/architecture.md` and `docs/ai-agent-guide.md` say **PixiJS** (the
+renderer is Canvas 2D in `packages/note-highway`), the hit windows in `docs/gameplay-spec.md`
 do not match `DEFAULT_HIT_WINDOWS`/`EXPERT_HIT_WINDOWS` in code, and the Rust
 `Settings::default()` says `autoplay: true` where `AppSettingsSchema` says `false` (harmless —
 autoplay is not in the mirrored `TauriAppSettingsPayload`, so the Zod default is the only one

@@ -1,0 +1,56 @@
+# Proves the documented Windows player path: `pnpm run setup` then `pnpm build:desktop`,
+# on a machine with nothing pre-built. Deliberately hand-rolled rather than using
+# tauri-apps/tauri-action, which would run its own install/build and so would prove a
+# different path than the one README.md tells players to run.
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Version given here rather than through a `packageManager` field in
+      # package.json: that field makes pnpm 12 record itself in pnpm-lock.yaml as a
+      # second YAML document, which pnpm 9 then discards as a broken lockfile. Keep
+      # the major in step with what `npm i -g pnpm` gives a player today.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      # The two commands from README.md, in order, and nothing else.
+      - name: Setup (install + build workspace packages)
+        run: pnpm run setup
+
+      - name: Build desktop app (NSIS installer)
+        run: pnpm run build:desktop
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: spotifyHero-windows-nsis
+          path: apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error
+
+      - name: Attach installer to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe

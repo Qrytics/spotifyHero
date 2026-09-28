@@ -1,7 +1,13 @@
 packages:
   - 'apps/*'
   - 'packages/*'
-  - 'services/*'
+
+# `pnpm run <script>` installs the whole workspace first by default, which would
+# re-install apps/spotifyhero-web (and re-run its ~80 MB ffmpeg-static postinstall)
+# behind the back of `pnpm run setup` — and inside Tauri's build hooks, which call
+# `pnpm run build:packages`. scripts/setup/setup.js owns the install instead.
+verifyDepsBeforeRun: false
+
 allowBuilds:
   # transitive optional ws speedup; the JS fallback is fine
   bufferutil: false

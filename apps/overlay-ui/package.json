@@ -2,7 +2,7 @@
   "name": "overlay-ui",
   "version": "0.0.1",
   "private": true,
-  "description": "React + PixiJS note highway and HUD for spotifyHero",
+  "description": "React + Canvas 2D note highway and HUD for spotifyHero",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -4,6 +4,9 @@
   "private": true,
   "description": "spotifyHero – Spotify-driven rhythm overlay game",
   "scripts": {
+    "setup": "node scripts/setup/setup.js",
+    "build:packages": "node scripts/setup/setup.js --build-only",
+    "play": "pnpm --filter desktop dev",
     "install:all": "pnpm install",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
