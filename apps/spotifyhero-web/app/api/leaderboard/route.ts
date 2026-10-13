@@ -1,36 +1,31 @@
 import { NextResponse } from "next/server";
-import { ensureSchema, sql } from "@/lib/db";
+import { ensureSchema, hasDatabase, sql } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
+/** GET [?chartId] → top players on that chart, and the most-played songs overall. */
 export async function GET(req: Request) {
+  if (!hasDatabase()) return NextResponse.json({ topPlayers: [], mostPlayedSongs: [] });
   await ensureSchema();
-  const url = new URL(req.url);
-  const chartId = url.searchParams.get("chartId");
-  if (!chartId) {
-    return NextResponse.json({ error: "chartId is required." }, { status: 400 });
-  }
+  const chartId = new URL(req.url).searchParams.get("chartId");
 
-  const topScores = await sql`
-    SELECT p.display_name, s.score, s.accuracy, s.max_combo, s.created_at
-    FROM sh_scores s
-    JOIN sh_players p ON p.id = s.player_id
-    WHERE s.chart_id = ${chartId}
-    ORDER BY s.score DESC
-    LIMIT 20
-  `;
+  const topScores = chartId
+    ? await sql`
+        SELECT p.display_name, s.score, s.accuracy, s.max_combo, s.created_at
+        FROM sh_chart_scores s
+        JOIN sh_players p ON p.id = s.player_id
+        WHERE s.chart_id = ${chartId}
+        ORDER BY s.score DESC
+        LIMIT 10`
+    : { rows: [] };
 
   const mostPlayed = await sql`
-    SELECT c.id, c.title, COUNT(*)::int AS plays
-    FROM sh_scores s
-    JOIN sh_song_charts c ON c.id = s.chart_id
-    GROUP BY c.id, c.title
+    SELECT c.youtube_video_id AS video_id, MIN(c.title) AS title, COUNT(*)::int AS plays
+    FROM sh_chart_scores s
+    JOIN sh_charts c ON c.id = s.chart_id
+    GROUP BY c.youtube_video_id
     ORDER BY plays DESC
-    LIMIT 10
-  `;
+    LIMIT 8`;
 
-  return NextResponse.json({
-    topPlayers: topScores.rows,
-    mostPlayedSongs: mostPlayed.rows,
-  });
+  return NextResponse.json({ topPlayers: topScores.rows, mostPlayedSongs: mostPlayed.rows });
 }

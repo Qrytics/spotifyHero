@@ -1,16 +1,4 @@
-export type Difficulty = "easy" | "medium" | "hard" | "expert";
+export type { Chart, Difficulty, Note } from "@spotifyhero/shared-types";
 
-export type Note = {
-  timeMs: number;
-  lane: number;
-  durationMs: number;
-};
-
-export type Chart = {
-  trackId: string;
-  difficulty: Difficulty;
-  notes: Note[];
-  bpm: number;
-  generatorVersion: string;
-  generatedAt: Date;
-};
+/** Charts are cached per generator; bump either package's version and songs re-chart. */
+export const DIFFICULTIES = ["easy", "medium", "hard", "expert"] as const;

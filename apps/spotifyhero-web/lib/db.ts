@@ -2,7 +2,18 @@ import { sql } from "@vercel/postgres";
 
 export { sql };
 
-export async function ensureSchema(): Promise<void> {
+let schemaReady: Promise<void> | null = null;
+
+/** Once per warm instance, not once per request: it is nine round trips of `IF NOT EXISTS`. */
+export function ensureSchema(): Promise<void> {
+  schemaReady ??= createSchema().catch((e) => {
+    schemaReady = null;
+    throw e;
+  });
+  return schemaReady;
+}
+
+async function createSchema(): Promise<void> {
   await sql`CREATE EXTENSION IF NOT EXISTS pgcrypto;`;
 
   await sql`
@@ -58,4 +69,38 @@ export async function ensureSchema(): Promise<void> {
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS sh_scores_player_chart_unique ON sh_scores(player_id, chart_id);
   `;
+
+  // v2: real charts from onset analysis. One chart per (video, difficulty, generator version), so
+  // every player on a difficulty plays — and is ranked on — the same notes. The tables above held
+  // pseudo-random placeholder charts keyed by video only; they are left in place, unused.
+  await sql`
+    CREATE TABLE IF NOT EXISTS sh_charts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      youtube_video_id TEXT NOT NULL,
+      difficulty TEXT NOT NULL,
+      generator_version TEXT NOT NULL,
+      title TEXT NOT NULL,
+      author TEXT NOT NULL DEFAULT '',
+      duration_ms INTEGER NOT NULL,
+      chart_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (youtube_video_id, difficulty, generator_version)
+    );
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS sh_chart_scores (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      player_id UUID NOT NULL REFERENCES sh_players(id) ON DELETE CASCADE,
+      chart_id UUID NOT NULL REFERENCES sh_charts(id) ON DELETE CASCADE,
+      score INTEGER NOT NULL,
+      accuracy NUMERIC(5,4) NOT NULL,
+      max_combo INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (player_id, chart_id)
+    );
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS sh_chart_scores_rank_idx ON sh_chart_scores(chart_id, score DESC);`;
 }
+
+/** False when no database is attached (local dev, a fresh preview): the game still plays. */
+export const hasDatabase = (): boolean => Boolean(process.env.POSTGRES_URL);
