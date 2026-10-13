@@ -43,7 +43,11 @@ the packages first on its own (that is what Vercel runs).
 
 ## Known limits
 
-- YouTube rate-limits and periodically blocks data-centre IPs; when it does, the converter returns
-  a clear error instead of a chart. Which InnerTube client works changes over time — see `CLIENTS`
-  in `lib/youtubeAudio.ts`.
+- **YouTube blocks most requests from Vercel.** Measured 2026-10-13: from Vercel's data-centre
+  addresses YouTube answers "Sign in to confirm you're not a bot" for most videos (1 of 8 got
+  through, even with fresh sessions); from a home connection every one worked. The converter
+  reports that plainly instead of failing silently. The reliable fix is running the converter
+  from a residential address (e.g. the Raspberry Pi that can host the portfolio) — it is one
+  route, `POST /api/youtube/audio`, with no state.
+- Which InnerTube client works changes over time — see `CLIENTS` in `lib/youtubeAudio.ts`.
 - Songs over 9 minutes and live streams are refused.

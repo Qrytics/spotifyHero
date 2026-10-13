@@ -34,13 +34,23 @@ export class YoutubeAudioError extends Error {
 }
 
 let innertube: Promise<Innertube> | null = null;
-function client(): Promise<Innertube> {
+/** `fresh` drops the cached session: YouTube's bot check is tied partly to the visitor session. */
+function client(fresh = false): Promise<Innertube> {
+  if (fresh) innertube = null;
   innertube ??= Innertube.create({ generate_session_locally: true }).catch((e) => {
     innertube = null;
     throw e;
   });
   return innertube;
 }
+
+/**
+ * Fresh sessions to try. Measured on Vercel (2026-10-13): YouTube's bot check is mostly tied to the
+ * data-centre address, not the session — 4 fresh sessions got 1 song in 8 through — so retrying
+ * more only delays the same error. A second try still rescues the occasional one-off 403.
+ */
+const ATTEMPTS = 2;
+const isBotCheck = (msg: string) => /not a bot|sign in to confirm|LOGIN_REQUIRED/i.test(msg);
 
 export type ResolvedAudio = {
   videoId: string;
@@ -51,8 +61,8 @@ export type ResolvedAudio = {
   contentLength: number;
 };
 
-export async function resolveAudio(videoId: string): Promise<ResolvedAudio> {
-  const yt = await client();
+export async function resolveAudio(videoId: string, fresh = false): Promise<ResolvedAudio> {
+  const yt = await client(fresh);
   let lastError = "no client could resolve this video";
   for (const name of CLIENTS) {
     try {
@@ -126,9 +136,30 @@ function toMp3(input: Buffer, durationS: number): Promise<Buffer> {
   });
 }
 
+/**
+ * Resolve + download, retried with a fresh session when YouTube answers with its bot check or
+ * refuses the stream (a 403 on the media URL). Real errors — private, too long, live — fail fast.
+ */
 export async function youtubeToMp3(videoId: string): Promise<{ mp3: Buffer; meta: ResolvedAudio }> {
-  const meta = await resolveAudio(videoId);
-  const source = await download(meta);
-  const mp3 = await toMp3(source, meta.durationS);
-  return { mp3, meta };
+  let lastError: unknown;
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    try {
+      const meta = await resolveAudio(videoId, attempt > 0);
+      const source = await download(meta);
+      const mp3 = await toMp3(source, meta.durationS);
+      return { mp3, meta };
+    } catch (e) {
+      lastError = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      const retryable = isBotCheck(msg) || /refused the audio stream \((403|429)\)/.test(msg);
+      if (!retryable) throw e;
+    }
+  }
+  const msg = lastError instanceof Error ? lastError.message : "";
+  throw new YoutubeAudioError(
+    isBotCheck(msg)
+      ? "YouTube is asking this server to prove it isn't a bot right now. Try again in a minute, or try another song."
+      : msg || "Couldn't get audio from YouTube.",
+    502,
+  );
 }
