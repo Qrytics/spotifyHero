@@ -389,7 +389,8 @@ export function GameClient() {
     const res = await fetch(`${API}/auth/me`).catch(() => null);
     const data = (await res?.json().catch(() => null)) as { player: Player; accounts?: boolean } | null;
     setPlayer(data?.player ?? null);
-    setAccounts(Boolean(res?.ok) && data?.accounts !== false);
+    // Only an explicit `accounts: false` (no database) hides sign-in; a failed request doesn't.
+    setAccounts(data?.accounts !== false);
   }
 
   async function auth(kind: "login" | "register" | "logout") {
