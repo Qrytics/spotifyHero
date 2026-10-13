@@ -1,0 +1,8 @@
+# Uploads for `vercel deploy` from the repo root (the spotifyhero-web project's root directory is
+# apps/spotifyhero-web). Build outputs only: every workspace package.json must still be uploaded,
+# or pnpm's frozen install finds the lockfile out of date.
+apps/desktop/src-tauri/target
+**/node_modules
+**/.next
+**/dist
+.env*
